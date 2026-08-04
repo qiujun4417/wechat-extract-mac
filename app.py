@@ -1523,7 +1523,6 @@ def api_ai_chat():
         time_to = data.get("time_to", 0)  # unix timestamp
         context_limit = data.get("context_limit", 200)  # max messages per contact
 
-        MAX_CONTEXT_CHARS = 50000  # Hard limit: ~25K tokens
 
         for uname in context_usernames:
             # Load messages with time range if specified
@@ -1545,10 +1544,6 @@ def api_ai_chat():
 
         if context_lines:
             system_content = "以下是用户选择的聊天记录（供分析参考）：\n" + "\n".join(context_lines)
-            # Truncate if too long
-            if len(system_content) > MAX_CONTEXT_CHARS:
-                system_content = system_content[:MAX_CONTEXT_CHARS] + "\n\n[... 聊天记录过长，已截断 ...]"
-                print(f"  [WARN] Context truncated to {MAX_CONTEXT_CHARS} chars")
             api_messages.append({"role": "system", "content": system_content})
             print(f"  System context: {len(system_content)} chars")
 

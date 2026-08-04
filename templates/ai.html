@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 分析 - WeChat Export</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        :root {
+            --bg: #1e1e2e; --surface: #252535; --border: #313244;
+            --text: #cdd6f4; --text-dim: #a6adc8; --accent: #5b6abf;
+            --accent-hover: #6b7acf; --sent: #95ec69; --radius: 10px;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* === Top Bar === */
+        .top-bar { display: flex; align-items: center; padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 12px; }
+        .top-bar .brand { display: flex; align-items: center; gap: 8px; }
+        .top-bar .brand a { color: var(--text-dim); text-decoration: none; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); }
+        .top-bar .brand a:hover { border-color: var(--accent); color: var(--accent); }
+        .top-bar h1 { font-size: 16px; font-weight: 600; }
+        .top-bar .spacer { flex: 1; }
+
+        /* Context selector in top bar */
+        .context-selector { display: flex; align-items: center; gap: 8px; background: var(--bg); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; max-width: 300px; }
+        .context-selector:hover { border-color: var(--accent); }
+        .context-selector .ctx-label { font-size: 12px; color: var(--text-dim); }
+        .context-selector .ctx-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+        .context-selector .ctx-icon { font-size: 16px; }
+
+        /* Config button */
+        .config-btn { padding: 8px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+        .config-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .upload-btn { padding: 12px; cursor: pointer; font-size: 18px; border-radius: 8px; }
+        .upload-btn:hover { background: var(--bg); }
+        .attached-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; max-width: 800px; margin: 0 auto; }
+        .file-pill { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; font-size: 12px; color: var(--text-dim); }
+
+        /* === Chat Area === */
+        .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .messages-area { flex: 1; overflow-y: auto; padding: 20px 0; }
+        .messages-inner { max-width: 800px; margin: 0 auto; padding: 0 20px; }
+
+        /* Welcome state */
+        .welcome { text-align: center; padding: 80px 20px; }
+        .welcome .icon { font-size: 64px; margin-bottom: 16px; }
+        .welcome h2 { font-size: 22px; margin-bottom: 8px; color: var(--text); }
+        .welcome p { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; }
+        .presets { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        .preset-btn { padding: 10px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; color: var(--text); font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .preset-btn:hover { border-color: var(--accent); background: #2a2a4a; }
+
+        /* Message bubbles */
+        .msg-row { margin-bottom: 20px; display: flex; }
+        .msg-row.user { justify-content: flex-end; }
+        .msg-row.ai { justify-content: flex-start; }
+        .msg-bubble { max-width: 85%; padding: 14px 18px; border-radius: 12px; font-size: 14px; line-height: 1.7; }
+        .msg-row.user .msg-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+        .msg-row.ai .msg-bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+        .msg-row.ai .msg-bubble p { margin-bottom: 8px; }
+        .msg-row.ai .msg-bubble p:last-child { margin-bottom: 0; }
+        .msg-row.ai .msg-bubble h1,.msg-row.ai .msg-bubble h2,.msg-row.ai .msg-bubble h3 { margin: 16px 0 8px; color: var(--text); }
+        .msg-row.ai .msg-bubble h1 { font-size: 18px; } .msg-row.ai .msg-bubble h2 { font-size: 16px; } .msg-row.ai .msg-bubble h3 { font-size: 14px; }
+        .msg-row.ai .msg-bubble ul,.msg-row.ai .msg-bubble ol { padding-left: 20px; margin: 8px 0; }
+        .msg-row.ai .msg-bubble li { margin-bottom: 4px; }
+        .msg-row.ai .msg-bubble code { background: #181825; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+        .msg-row.ai .msg-bubble pre { background: #181825; padding: 14px; border-radius: 8px; margin: 12px 0; overflow-x: auto; }
+        .msg-row.ai .msg-bubble pre code { background: none; padding: 0; }
+        .msg-row.ai .msg-bubble table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+        .msg-row.ai .msg-bubble th,.msg-row.ai .msg-bubble td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+        .msg-row.ai .msg-bubble th { background: #181825; font-weight: 600; }
+        .msg-row.ai .msg-bubble blockquote { border-left: 3px solid var(--accent); padding-left: 12px; margin: 8px 0; color: var(--text-dim); }
+        .echart-container { width: 100%; height: 300px; margin: 12px 0; border-radius: 8px; }
+        .mermaid-container { margin: 12px 0; }
+        .mermaid-container svg { max-width: 100%; }
+        .typing-indicator { display: inline-flex; gap: 4px; padding: 4px 0; }
+        .typing-indicator span { width: 6px; height: 6px; background: var(--text-dim); border-radius: 50%; animation: blink 1.4s infinite both; }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink { 0%,80%,100%{ opacity:.3 } 40%{ opacity:1 } }
+
+        /* Input area */
+        .input-area { padding: 16px 20px; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
+        .input-inner { max-width: 800px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+        .input-inner textarea { flex: 1; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; color: var(--text); font-size: 14px; resize: none; outline: none; min-height: 44px; max-height: 150px; line-height: 1.5; font-family: inherit; }
+        .input-inner textarea:focus { border-color: var(--accent); }
+        .send-btn { padding: 12px 20px; background: var(--accent); color: #fff; border: none; border-radius: 12px; font-size: 14px; cursor: pointer; font-weight: 500; white-space: nowrap; }
+        .send-btn:hover { background: var(--accent-hover); }
+        .send-btn:disabled { background: #444; color: #777; cursor: not-allowed; }
+
+        /* === Modal (Config & Contact Picker) === */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: none; align-items: center; justify-content: center; }
+        .modal-overlay.show { display: flex; }
+        .modal { background: var(--surface); border-radius: 16px; padding: 28px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+        .modal h2 { font-size: 18px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+        .modal h2 .close-btn { cursor: pointer; font-size: 20px; color: var(--text-dim); padding: 4px 8px; border-radius: 4px; }
+        .modal h2 .close-btn:hover { background: var(--bg); }
+        .modal .form-group { margin-bottom: 16px; }
+        .modal .form-group label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+        .modal .form-group input, .modal .form-group select { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; }
+        .modal .form-group input:focus, .modal .form-group select:focus { border-color: var(--accent); }
+        .modal .form-group .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+        .modal .btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+        .modal .btn { padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; border: none; }
+        .modal .btn-primary { background: var(--accent); color: #fff; }
+        .modal .btn-primary:hover { background: var(--accent-hover); }
+        .modal .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+
+        /* Contact picker modal */
+        .contact-search { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; margin-bottom: 12px; }
+        .contact-search:focus { border-color: var(--accent); }
+        .contact-list { max-height: 400px; overflow-y: auto; }
+        .contact-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+        .contact-item:hover { background: var(--bg); }
+        .contact-item.selected { background: #2a2a4a; border: 1px solid var(--accent); }
+        .contact-item .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; flex-shrink: 0; }
+        .contact-item .info { flex: 1; min-width: 0; }
+        .contact-item .info .name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .contact-item .info .meta { font-size: 11px; color: var(--text-dim); }
+        .contact-item .badge { font-size: 11px; background: var(--bg); padding: 2px 8px; border-radius: 10px; color: var(--text-dim); }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="brand">
+            <a href="/">← 导出</a>
+            <h1>🤖 AI 分析</h1>
+        </div>
+        <button onclick="newSession()" style="padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-dim);cursor:pointer;font-size:12px;">➕ 新对话</button>
+        <select id="sessionSelect" onchange="switchSession(this.value)" style="padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;max-width:180px;"></select>
+        <div class="spacer"></div>
+        <div class="context-selector" onclick="openContactPicker()">
+            <span class="ctx-icon">💬</span>
+            <div>
+                <div class="ctx-label">分析对象</div>
+                <div class="ctx-name" id="contextName">点击选择联系人/群组</div>
+            </div>
+        </div>
+        <div class="thinking-toggle" title="推理模式">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text-dim);">
+                <input type="checkbox" id="thinkingToggle" checked> 🧠 深度思考
+            </label>
+        </div>
+        <button class="config-btn" onclick="openConfig()">⚙️ 设置</button>
+    </div>
+
+    <!-- Chat Area -->
+    <div class="chat-area">
+        <div class="messages-area" id="messagesArea">
+            <div class="messages-inner" id="messagesInner">
+                <div class="welcome" id="welcomeState">
+                    <div class="icon">🧠</div>
+                    <h2>AI 聊天分析</h2>
+                    <p>选择一个联系人或群组，让 AI 帮你分析聊天记录</p>
+                    <div class="presets">
+                        <button class="preset-btn" onclick="sendPreset('请分析我和对方的聊天频率，按月统计，并用表格展示')">📊 聊天频率</button>
+                        <button class="preset-btn" onclick="sendPreset('请总结最近的对话内容，提取关键信息和重要事件')">📝 总结对话</button>
+                        <button class="preset-btn" onclick="sendPreset('请分析聊天中的情感倾向和关系变化趋势')">💕 情感分析</button>
+                        <button class="preset-btn" onclick="sendPreset('请生成一份详细的聊天数据报告，包含消息统计、活跃时间段、话题分布等')">📋 生成报告</button>
+                        <button class="preset-btn" onclick="sendPreset('请分析聊天中讨论最多的话题，按频率排序')">🏷️ 话题分析</button>
+                        <button class="preset-btn" onclick="sendPreset('请找出聊天记录中的有趣/搞笑对话')">😂 趣味对话</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="input-area">
+            <div class="attached-files" id="attachedFiles" style="display:none;"></div>
+            <div class="input-inner">
+                <label class="upload-btn" title="上传图片/文件">
+                    <input type="file" id="fileInput" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md" style="display:none" onchange="handleFileUpload(event)">
+                    📎
+                </label>
+                <textarea id="userInput" placeholder="输入问题，让 AI 分析聊天记录..." rows="1" onkeydown="handleKey(event)"></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal">
+            <h2>API 设置 <span class="close-btn" onclick="closeConfig()">✕</span></h2>
+            <div class="form-group">
+                <label>API Base URL</label>
+                <input type="text" id="cfgApiBase" placeholder="https://api.moonshot.cn/v1">
+                <div class="hint">支持 Kimi、OpenAI、Claude、DeepSeek 等兼容接口</div>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="cfgApiKey" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+                <label>Model</label>
+                <input type="text" id="cfgModel" placeholder="kimi-k3-0901-128k">
+                <div class="hint">Kimi K3: kimi-k3-0901-128k | GPT-4o: gpt-4o | Claude: claude-sonnet-4-20250514</div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-ghost" onclick="closeConfig()">取消</button>
+                <button class="btn btn-primary" onclick="saveConfig()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contact Picker Modal -->
+    <div class="modal-overlay" id="contactModal">
+        <div class="modal" style="max-width:450px">
+            <h2>选择分析对象 <span class="close-btn" onclick="closeContactPicker()">✕</span></h2>
+            <input type="text" class="contact-search" id="contactSearch" placeholder="搜索联系人或群组..." oninput="filterContacts()">
+            <div class="contact-list" id="contactList">
+                <div style="text-align:center;color:var(--text-dim);padding:40px">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // State
+        let contacts = [];
+        let selectedContacts = []; // support multiple
+        let chatHistory = []; // {role, content}
+        let isStreaming = false;
+        let thinkingDetailsOpen = true;
+        let attachedFiles = []; // {file_id, name, type}
+        let attachedImages = []; // {data: base64, name: filename}
+        let currentSessionId = localStorage.getItem('ai_session_id') || null;
+        let sessions = [];
+
+        // Init
+        loadConfig();
+        let contactsLoaded = loadContacts();
+        autoResizeTextarea();
+        loadSessions().then(() => initPreselected());
+
+        // === Config ===
+        function loadConfig() {
+            fetch('/api/ai/config').then(r => r.json()).then(cfg => {
+                document.getElementById('cfgApiBase').value = cfg.api_base || '';
+                document.getElementById('cfgApiKey').value = '';
+                document.getElementById('cfgApiKey').placeholder = cfg.api_key_masked || 'sk-...';
+                document.getElementById('cfgModel').value = cfg.model || '';
+            });
+        }
+        window.openConfig = () => document.getElementById('configModal').classList.add('show');
+        window.closeConfig = () => document.getElementById('configModal').classList.remove('show');
+        window.saveConfig = async () => {
+            const data = {
+                api_base: document.getElementById('cfgApiBase').value.trim(),
+                model: document.getElementById('cfgModel').value.trim(),
+            };
+            const key = document.getElementById('cfgApiKey').value.trim();
+            if (key) data.api_key = key;
+            const resp = await fetch('/api/ai/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+            if (resp.ok) { closeConfig(); showToast('设置已保存'); }
+        };
+
+        // === Contacts ===
+        async function loadContacts() {
+            try {
+                const resp = await fetch('/api/contacts');
+                contacts = await resp.json();
+            } catch(e) { contacts = []; }
+            return contacts;
+        }
+
+        async function initPreselected() {
+            const params = new URLSearchParams(window.location.search);
+            const preselected = params.getAll('contact');
+            if (preselected.length === 0) return;
+
+            // If we have URL contacts, this is a new context from the export page
+            // Start a fresh session for it (or update current if empty)
+            await contactsLoaded;
+
+            selectedContacts = [];
+            preselected.forEach(username => {
+                const c = contacts.find(ct => ct.username === username);
+                if (c && !selectedContacts.some(sc => sc.username === username)) {
+                    selectedContacts.push(c);
+                }
+            });
+            updateContextDisplay();
+
+            if (selectedContacts.length > 0) {
+                // If current session already has chat history, create a new one
+                if (chatHistory.length > 0) {
+                    const resp = await fetch('/api/ai/sessions', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            title: selectedContacts.map(c => c.display_name || c.username).join(', ').slice(0, 30),
+                            contacts: selectedContacts.map(c => c.username)
+                        })
+                    });
+                    const data = await resp.json();
+                    currentSessionId = data.id;
+                    localStorage.setItem('ai_session_id', data.id);
+                    chatHistory = [];
+                }
+                showContextBanner();
+                // Clean URL
+                window.history.replaceState({}, '', '/ai');
+            }
+        }
+
+        window.openContactPicker = () => {
+            document.getElementById('contactModal').classList.add('show');
+            renderContactList();
+            document.getElementById('contactSearch').focus();
+        };
+        window.closeContactPicker = () => document.getElementById('contactModal').classList.remove('show');
+
+        window.filterContacts = () => renderContactList();
+
+        function renderContactList() {
+            const query = (document.getElementById('contactSearch').value || '').toLowerCase();
+            let filtered = contacts;
+            if (query) {
+                filtered = contacts.filter(c =>
+                    (c.display_name||'').toLowerCase().includes(query) ||
+                    (c.username||'').toLowerCase().includes(query) ||
+                    (c.nick_name||'').toLowerCase().includes(query)
+                );
+            }
+            const list = document.getElementById('contactList');
+            if (!filtered.length) {
+                list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px">无结果</div>';
+                return;
+            }
+            list.innerHTML = filtered.slice(0, 50).map(c => {
+                const initial = (c.display_name||c.username||'?')[0];
+                const isSelected = selectedContacts.some(sc => sc.username === c.username);
+                const badge = c.is_group ? '群' : '';
+                return `<div class="contact-item ${isSelected?'selected':''}" onclick="pickContact('${c.username}')">
+                    <div class="avatar">${initial}</div>
+                    <div class="info">
+                        <div class="name">${esc(c.display_name||c.username)}</div>
+                        <div class="meta">${c.message_count||0} 条消息 · ${c.last_active||''}</div>
+                    </div>
+                    ${isSelected ? '<span class="badge" style="background:#5b6abf;color:#fff">✓</span>' : (badge ? `<span class="badge">${badge}</span>` : '')}
+                </div>`;
+            }).join('');
+            // Add confirm button at bottom
+            list.innerHTML += `<div style="padding:12px;text-align:center;position:sticky;bottom:0;background:var(--surface);">
+                <button class="btn btn-primary" onclick="confirmContactPicker()" style="padding:8px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">确定 (${selectedContacts.length})</button>
+            </div>`;
+        }
+
+        window.pickContact = (username) => {
+            const contact = contacts.find(c => c.username === username);
+            if (!contact) return;
+            // Toggle: if already selected, remove; otherwise add
+            const idx = selectedContacts.findIndex(c => c.username === username);
+            if (idx >= 0) {
+                selectedContacts.splice(idx, 1);
+            } else {
+                selectedContacts.push(contact);
+            }
+            updateContextDisplay();
+            renderContactList();
+        };
+
+        function updateContextDisplay() {
+            const el = document.getElementById('contextName');
+            if (selectedContacts.length === 0) {
+                el.textContent = '点击选择联系人/群组';
+            } else if (selectedContacts.length === 1) {
+                el.textContent = selectedContacts[0].display_name || selectedContacts[0].username;
+            } else {
+                el.textContent = `${selectedContacts[0].display_name || selectedContacts[0].username} 等${selectedContacts.length}个`;
+            }
+        }
+
+        window.confirmContactPicker = () => {
+            closeContactPicker();
+            chatHistory = [];
+            document.getElementById('messagesInner').innerHTML = '';
+            if (selectedContacts.length > 0) {
+                showContextBanner();
+            } else {
+                renderChat();
+            }
+        };
+
+        // === Chat ===
+        window.sendPreset = (text) => {
+            if (selectedContacts.length === 0) {
+                openContactPicker();
+                showToast('请先选择分析对象');
+                return;
+            }
+            document.getElementById('userInput').value = text;
+            sendMessage();
+        };
+
+        window.sendMessage = async () => {
+            const input = document.getElementById('userInput');
+            const text = input.value.trim();
+            if (!text || isStreaming) return;
+
+            // Add user message
+            chatHistory.push({role: 'user', content: text});
+            input.value = '';
+            input.style.height = 'auto';
+            hideWelcome();
+            renderChat();
+
+            // Stream AI response
+            isStreaming = true;
+            document.getElementById('sendBtn').disabled = true;
+            chatHistory.push({role: 'assistant', content: ''});
+            renderChat(true); // show typing
+
+            try {
+                const body = {
+                    messages: chatHistory.slice(0, -1).map(m => ({role: m.role, content: m.content})),
+                    user_message: text,
+                    thinking: document.getElementById('thinkingToggle').checked,
+                };
+                // Send all selected contacts as context
+                if (selectedContacts.length > 0) {
+                    body.context_usernames = selectedContacts.map(c => c.username);
+                }
+                if (attachedFiles.length > 0) body.file_ids = attachedFiles.map(f => f.file_id);
+                if (attachedImages.length > 0) body.images = attachedImages;
+
+                // Clear attachments after send
+                attachedFiles = [];
+                attachedImages = [];
+                renderAttachments();
+
+                const resp = await fetch('/api/ai/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, {stream: true});
+
+                    // Process SSE lines
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete line
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const payload = line.slice(6);
+                        if (payload === '[DONE]') continue;
+                        try {
+                            const data = JSON.parse(payload);
+                            if (data.content) {
+                                // Switch from thinking to content mode
+                                const lastMsg = chatHistory[chatHistory.length-1];
+                                if (lastMsg._thinking && !lastMsg._contentStarted) {
+                                    lastMsg._contentStarted = true;
+                                }
+                                lastMsg.content += data.content;
+                                renderChat(false);
+                            }
+                            if (data.thinking) {
+                                // Accumulate thinking content
+                                const lastMsg = chatHistory[chatHistory.length-1];
+                                if (!lastMsg._thinking) lastMsg._thinking = '';
+                                lastMsg._thinking += data.thinking;
+                                renderChat(false);
+                            }
+                            if (data.error) {
+                                chatHistory[chatHistory.length-1].content += `\n\n❌ Error: ${data.error}`;
+                                renderChat(false);
+                            }
+                        } catch(e) {}
+                    }
+                }
+            } catch(e) {
+                chatHistory[chatHistory.length-1].content = `❌ 请求失败: ${e.message}\n\n请检查 API 设置是否正确。`;
+                renderChat(false);
+            }
+
+            isStreaming = false;
+            document.getElementById('sendBtn').disabled = false;
+            renderChat(false);
+            postRender();
+            // Auto-save session after AI response
+            saveCurrentSession();
+        };
+
+        function hideWelcome() {
+            const w = document.getElementById('welcomeState');
+            if (w) w.remove();
+        }
+
+        function renderChat(typing = false) {
+            const inner = document.getElementById('messagesInner');
+            let html = '';
+
+            // Always show context banner at top if contacts are selected
+            if (selectedContacts.length > 0) {
+                const names = selectedContacts.map(c => c.display_name || c.username);
+                const nameList = names.length <= 3
+                    ? names.join('、')
+                    : names.slice(0, 3).join('、') + ` 等${names.length}个`;
+                const typeLabel = selectedContacts.length === 1
+                    ? (selectedContacts[0].is_group ? '群聊' : '联系人')
+                    : '对话';
+                html += `<div class="msg-row ai"><div class="msg-bubble" style="background:#2a3a2a;border-color:#3a6b3a;">
+                    <div style="font-size:13px;">✅ 已加载 <strong>${selectedContacts.length}</strong> 个${typeLabel}的聊天记录：${esc(nameList)}</div>
+                </div></div>`;
+            }
+
+            for (let i = 0; i < chatHistory.length; i++) {
+                const msg = chatHistory[i];
+                if (msg.role === 'user') {
+                    html += `<div class="msg-row user"><div class="msg-bubble">${esc(msg.content)}</div></div>`;
+                } else {
+                    const isLast = i === chatHistory.length - 1;
+                    const content = msg.content || '';
+                    const thinking = msg._thinking || '';
+                    if (isLast && typing && !content && !thinking) {
+                        html += `<div class="msg-row ai"><div class="msg-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
+                    } else {
+                        let bubbleHtml = '';
+                        // Show thinking in a collapsible section
+                        if (thinking) {
+                            const thinkingPreview = thinking.length > 100 ? thinking.slice(0, 100) + '...' : thinking;
+                            bubbleHtml += `<details ${thinkingDetailsOpen ? 'open' : ''} style="margin-bottom:8px;font-size:12px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">
+                                <summary style="cursor:pointer;user-select:none;">💭 思考中${content ? '（点击展开）' : '...'} <span style="opacity:0.5">${thinking.length} chars</span></summary>
+                                <div style="margin-top:6px;white-space:pre-wrap;opacity:0.7;max-height:200px;overflow-y:auto;">${esc(thinking)}</div>
+                            </details>`;
+                        }
+                        if (content) {
+                            bubbleHtml += renderMarkdown(content);
+                        } else if (thinking && !content) {
+                            // Still thinking, no content yet
+                            bubbleHtml += `<div class="typing-indicator" style="margin-top:4px"><span></span><span></span><span></span></div>`;
+                        }
+                        html += `<div class="msg-row ai"><div class="msg-bubble">${bubbleHtml}</div></div>`;
+                    }
+                }
+            }
+            inner.innerHTML = html;
+            document.querySelectorAll('details').forEach(d => { d.addEventListener('toggle', () => { thinkingDetailsOpen = d.open; }); });
+            scrollToBottom();
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            try {
+                marked.setOptions({
+                    highlight: (code, lang) => {
+                        if (lang && hljs.getLanguage(lang)) {
+                            return hljs.highlight(code, {language: lang}).value;
+                        }
+                        return hljs.highlightAuto(code).value;
+                    },
+                    breaks: true
+                });
+                return marked.parse(text);
+            } catch(e) {
+                return text.replace(/\n/g, '<br>');
+            }
+        }
+
+        function postRender() {
+            // Render mermaid diagrams
+            document.querySelectorAll('pre code.language-mermaid').forEach((block, i) => {
+                const container = document.createElement('div');
+                container.className = 'mermaid-container';
+                container.innerHTML = block.textContent;
+                block.closest('pre').replaceWith(container);
+            });
+            try { mermaid.init(undefined, '.mermaid-container'); } catch(e) {}
+
+            // Render echarts
+            document.querySelectorAll('pre code.language-echarts').forEach((block, i) => {
+                try {
+                    const option = JSON.parse(block.textContent);
+                    const container = document.createElement('div');
+                    container.className = 'echart-container';
+                    container.id = 'echart_' + i;
+                    block.closest('pre').replaceWith(container);
+                    const chart = echarts.init(container, 'dark');
+                    chart.setOption(option);
+                } catch(e) {}
+            });
+        }
+
+        function scrollToBottom() {
+            const area = document.getElementById('messagesArea');
+            area.scrollTop = area.scrollHeight;
+        }
+
+        // === Input ===
+        window.handleKey = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        };
+
+        function autoResizeTextarea() {
+            const ta = document.getElementById('userInput');
+            ta.addEventListener('input', () => {
+                ta.style.height = 'auto';
+                ta.style.height = Math.min(ta.scrollHeight, 150) + 'px';
+            });
+        }
+
+        // === Utils ===
+        function esc(s) {
+            if (!s) return '';
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function showToast(msg) {
+            let t = document.getElementById('toast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'toast';
+                t.style.cssText = 'position:fixed;bottom:24px;right:24px;padding:12px 20px;background:#333;color:#fff;border-radius:8px;font-size:14px;z-index:9999;opacity:0;transition:opacity 0.3s;';
+                document.body.appendChild(t);
+            }
+            t.textContent = msg;
+            t.style.opacity = '1';
+            setTimeout(() => t.style.opacity = '0', 2500);
+        }
+
+        // Init mermaid
+        mermaid.initialize({startOnLoad: false, theme: 'dark'});
+
+        function showContextBanner() {
+            hideWelcome();
+            renderChat();
+        }
+
+        // === File Upload ===
+        async function handleFileUpload(event) {
+            const files = event.target.files;
+            for (const file of files) {
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const base64 = e.target.result.split(',')[1];
+                        attachedImages.push({data: base64, name: file.name});
+                        renderAttachments();
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        const resp = await fetch('/api/ai/upload', {method: 'POST', body: formData});
+                        const result = await resp.json();
+                        if (result.id) {
+                            attachedFiles.push({file_id: result.id, name: file.name, type: file.file_type});
+                            renderAttachments();
+                            showToast(`已上传: ${file.name}`);
+                        } else {
+                            showToast(`上传失败: ${result.error}`);
+                        }
+                    } catch(e) {
+                        showToast(`上传失败: ${e.message}`);
+                    }
+                }
+            }
+            event.target.value = '';
+        }
+        window.handleFileUpload = handleFileUpload;
+
+        function renderAttachments() {
+            const container = document.getElementById('attachedFiles');
+            const items = [
+                ...attachedImages.map((img, i) => `<span class="file-pill">🖼️ ${esc(img.name)} <span onclick="removeImage(${i})" style="cursor:pointer">✕</span></span>`),
+                ...attachedFiles.map((f, i) => `<span class="file-pill">📄 ${esc(f.name)} <span onclick="removeFile(${i})" style="cursor:pointer">✕</span></span>`)
+            ];
+            container.innerHTML = items.join('');
+            container.style.display = items.length ? 'flex' : 'none';
+        }
+
+        window.removeImage = (i) => { attachedImages.splice(i, 1); renderAttachments(); };
+        window.removeFile = (i) => { attachedFiles.splice(i, 1); renderAttachments(); };
+
+        // === Session Management ===
+        async function loadSessions() {
+            try {
+                const resp = await fetch('/api/ai/sessions');
+                sessions = await resp.json();
+                renderSessionList();
+                // Restore current session
+                if (currentSessionId) {
+                    await restoreSession(currentSessionId);
+                }
+            } catch(e) { sessions = []; }
+        }
+
+        function renderSessionList() {
+            const sel = document.getElementById('sessionSelect');
+            let html = '<option value="">选择历史对话...</option>';
+            sessions.forEach(s => {
+                const selected = s.id === currentSessionId ? 'selected' : '';
+                const label = s.title.length > 15 ? s.title.slice(0, 15) + '...' : s.title;
+                html += `<option value="${s.id}" ${selected}>${label} (${s.message_count})</option>`;
+            });
+            sel.innerHTML = html;
+        }
+
+        async function restoreSession(sid) {
+            try {
+                const resp = await fetch(`/api/ai/sessions/${sid}`);
+                if (!resp.ok) { currentSessionId = null; localStorage.removeItem('ai_session_id'); return; }
+                const data = await resp.json();
+                chatHistory = data.messages || [];
+                // Restore selected contacts
+                if (data.contacts && data.contacts.length > 0) {
+                    await contactsLoaded;
+                    selectedContacts = [];
+                    data.contacts.forEach(uname => {
+                        const c = contacts.find(ct => ct.username === uname);
+                        if (c) selectedContacts.push(c);
+                    });
+                    updateContextDisplay();
+                }
+                currentSessionId = sid;
+                localStorage.setItem('ai_session_id', sid);
+                if (chatHistory.length > 0 || selectedContacts.length > 0) {
+                    hideWelcome();
+                    renderChat();
+                }
+            } catch(e) {}
+        }
+
+        window.switchSession = async (sid) => {
+            if (!sid) return;
+            await restoreSession(sid);
+        };
+
+        window.newSession = async () => {
+            // Save current if has content
+            if (currentSessionId && chatHistory.length > 0) {
+                await saveCurrentSession();
+            }
+            // Create new
+            const resp = await fetch('/api/ai/sessions', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({title: 'New Chat', contacts: []})
+            });
+            const data = await resp.json();
+            currentSessionId = data.id;
+            localStorage.setItem('ai_session_id', data.id);
+            // Reset state
+            chatHistory = [];
+            selectedContacts = [];
+            updateContextDisplay();
+            document.getElementById('messagesInner').innerHTML = '';
+            // Show welcome
+            location.reload();
+        };
+
+        async function saveCurrentSession() {
+            if (!currentSessionId) {
+                // Create a new session
+                const title = chatHistory.length > 0
+                    ? (chatHistory.find(m => m.role === 'user')?.content || 'New Chat').slice(0, 30)
+                    : 'New Chat';
+                const resp = await fetch('/api/ai/sessions', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        title: title,
+                        contacts: selectedContacts.map(c => c.username)
+                    })
+                });
+                const data = await resp.json();
+                currentSessionId = data.id;
+                localStorage.setItem('ai_session_id', data.id);
+            }
+            // Save state
+            const title = chatHistory.length > 0
+                ? (chatHistory.find(m => m.role === 'user')?.content || 'New Chat').slice(0, 30)
+                : 'New Chat';
+            await fetch(`/api/ai/sessions/${currentSessionId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    messages: chatHistory,
+                    contacts: selectedContacts.map(c => c.username),
+                    title: title,
+                })
+            });
+            // Refresh session list
+            const resp2 = await fetch('/api/ai/sessions');
+            sessions = await resp2.json();
+            renderSessionList();
+        }
+
+    })();
+    </script>
+</body>
+</html>

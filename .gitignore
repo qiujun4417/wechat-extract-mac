@@ -1,0 +1,22 @@
+# Sensitive data - NEVER commit
+ai_config.json
+ai_sessions.json
+all_keys.json
+
+# Decrypted databases
+decrypted/
+
+# WeChat passphrase
+.wcdb-key-tool/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Compiled binaries
+wechat_key_finder
+*.dylib

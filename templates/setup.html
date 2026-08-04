@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeChat Export - Setup</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e0e0e0;
+        }
+        .setup-container {
+            background: #1e1e2e;
+            border-radius: 16px;
+            padding: 48px;
+            max-width: 720px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .logo { text-align: center; margin-bottom: 24px; }
+        .logo .icon { font-size: 48px; margin-bottom: 8px; }
+        .logo h1 { font-size: 24px; font-weight: 600; color: #fff; }
+        .logo p { color: #888; font-size: 13px; margin-top: 4px; }
+
+        .status-bar {
+            display: flex; gap: 10px; justify-content: center;
+            margin-bottom: 24px; flex-wrap: wrap;
+        }
+        .status-item { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: #252535; }
+        .status-item.ok { background: #1e3a1e; color: #7fbf7f; }
+        .status-item.warn { background: #3a3a1e; color: #bfbf3f; }
+        .status-item.err { background: #3a1e1e; color: #bf5f5f; }
+
+        .steps { margin: 24px 0; }
+        .step {
+            padding: 16px 20px; margin-bottom: 10px; border-radius: 10px;
+            background: #252535; border: 1px solid #333; transition: all 0.2s;
+        }
+        .step.active { background: #2a2a4a; border-color: #5b6abf; }
+        .step.done { background: #1e2e1e; border-color: #3a6b3a; }
+        .step-header { display: flex; align-items: center; gap: 12px; }
+        .step-num {
+            width: 28px; height: 28px; border-radius: 50%; background: #333;
+            color: #888; display: flex; align-items: center; justify-content: center;
+            font-weight: 600; font-size: 13px; flex-shrink: 0;
+        }
+        .step.active .step-num { background: #5b6abf; color: #fff; }
+        .step.done .step-num { background: #4caf50; color: #fff; }
+        .step-title { font-size: 14px; font-weight: 600; color: #ddd; }
+        .step.done .step-title { color: #7fbf7f; }
+        .step-body { margin-top: 12px; padding-left: 40px; }
+        .step-body p { font-size: 13px; color: #999; line-height: 1.6; }
+
+        .cmd {
+            display: block; background: #1a1a2a; border: 1px solid #444;
+            border-radius: 6px; padding: 10px 14px; margin-top: 8px;
+            font-family: 'SF Mono', 'Menlo', monospace; font-size: 12px;
+            color: #7fbf7f; cursor: pointer; word-break: break-all;
+        }
+        .cmd:hover { background: #222238; border-color: #5b6abf; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 20px; border-radius: 8px; font-size: 14px;
+            font-weight: 500; cursor: pointer; border: none; transition: all 0.2s;
+            margin-top: 10px;
+        }
+        .btn-primary { background: #5b6abf; color: #fff; }
+        .btn-primary:hover { background: #6b7acf; }
+        .btn-primary:disabled { background: #444; color: #777; cursor: not-allowed; }
+        .btn-success { background: #3a8a3a; color: #fff; }
+        .btn-success:hover { background: #4a9a4a; }
+        .btn-warning { background: #8a6a2a; color: #fff; }
+        .btn-warning:hover { background: #9a7a3a; }
+
+        .progress-area {
+            margin-top: 12px; padding: 12px; background: #1a1a2a;
+            border-radius: 8px; display: none;
+        }
+        .progress-area.show { display: block; }
+        .progress-bar {
+            height: 6px; background: #333; border-radius: 3px; overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-fill {
+            height: 100%; background: #5b6abf; border-radius: 3px;
+            transition: width 0.3s ease; width: 0%;
+        }
+        .progress-log {
+            margin-top: 8px; max-height: 150px; overflow-y: auto;
+            font-family: 'SF Mono', monospace; font-size: 11px;
+            color: #aaa; line-height: 1.6;
+        }
+        .progress-log .error { color: #e57373; }
+        .progress-log .success { color: #81c784; }
+        .progress-log .action { color: #ffd54f; font-weight: 600; }
+
+        .note { font-size: 12px; color: #f0ad4e; margin-top: 6px; }
+        .refresh-section { text-align: center; margin-top: 28px; }
+    </style>
+</head>
+<body>
+    <div class="setup-container">
+        <div class="logo">
+            <div class="icon">💬</div>
+            <h1>WeChat Chat Export</h1>
+            <p>macOS 微信聊天记录导出工具</p>
+        </div>
+
+        <div class="status-bar">
+            <span class="status-item {{ 'ok' if status.wechat_installed else 'err' }}">
+                {{ '✓' if status.wechat_installed else '✗' }} WeChat
+            </span>
+            <span class="status-item {{ 'ok' if status.wechat_running else 'warn' }}">
+                {{ '✓' if status.wechat_running else '○' }} Running
+            </span>
+            <span class="status-item {{ 'ok' if status.wechat_signed else 'warn' }}">
+                {{ '✓' if status.wechat_signed else '○' }} Signed
+            </span>
+            <span class="status-item {{ 'ok' if status.has_passphrase else 'warn' }}">
+                {{ '✓' if status.has_passphrase else '○' }} Key
+            </span>
+            <span class="status-item {{ 'ok' if status.databases_decrypted else 'err' }}">
+                {{ '✓' if status.databases_decrypted else '✗' }} Decrypted
+            </span>
+        </div>
+
+        <div class="steps">
+            <!-- Step 1: Re-sign -->
+            <div class="step {{ 'done' if status.wechat_signed else 'active' if status.step == 1 else '' }}" id="step1">
+                <div class="step-header">
+                    <div class="step-num">{{ '✓' if status.wechat_signed else '1' }}</div>
+                    <div class="step-title">重签名微信</div>
+                </div>
+                {% if not status.wechat_signed %}
+                <div class="step-body">
+                    <p>移除 Hardened Runtime，允许调试器附加。需要 sudo 权限。</p>
+                    <button class="btn btn-warning" onclick="doResign()" id="resignBtn">🔓 执行重签名</button>
+                    <p class="note">⚠️ 如果 web 应用不是以 sudo 启动的，请在终端执行：</p>
+                    <code class="cmd" onclick="copyCmd(this)">sudo codesign --force --deep --sign - /Applications/WeChat.app</code>
+                    <p class="note">执行后需要重启微信</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Step 2: Capture passphrase -->
+            <div class="step {{ 'done' if status.has_passphrase or status.has_keys else 'active' if status.step == 2 else '' }}" id="step2">
+                <div class="step-header">
+                    <div class="step-num">{{ '✓' if status.has_passphrase or status.has_keys else '2' }}</div>
+                    <div class="step-title">捕获加密密钥</div>
+                </div>
+                {% if not status.has_passphrase and not status.has_keys %}
+                <div class="step-body">
+                    <p>通过 LLDB 断点捕获微信数据库密钥原料。需要 sudo 启动本应用。</p>
+                    <button class="btn btn-primary" onclick="doCapture()" id="captureBtn">🔑 开始捕获</button>
+                    <div class="progress-area" id="captureProgress">
+                        <div class="progress-log" id="captureLog"></div>
+                    </div>
+                    <p class="note" style="margin-top:8px">💡 点击后请在微信中<strong>退出登录</strong>，然后<strong>重新登录</strong>（触发密钥计算）</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Step 3: Decrypt -->
+            <div class="step {{ 'done' if status.databases_decrypted else 'active' if status.step == 3 else '' }}" id="step3">
+                <div class="step-header">
+                    <div class="step-num">{{ '✓' if status.databases_decrypted else '3' }}</div>
+                    <div class="step-title">解密数据库</div>
+                </div>
+                {% if not status.databases_decrypted %}
+                <div class="step-body">
+                    <p>使用捕获的密钥解密所有微信数据库（约1-3分钟）。</p>
+                    <button class="btn btn-primary" onclick="doDecrypt()" id="decryptBtn"
+                        {{ 'disabled' if not status.has_passphrase and not status.has_keys else '' }}>
+                        📦 开始解密
+                    </button>
+                    <div class="progress-area" id="decryptProgress">
+                        <div class="progress-bar"><div class="progress-fill" id="decryptFill"></div></div>
+                        <div class="progress-log" id="decryptLog"></div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="refresh-section">
+            {% if status.databases_decrypted %}
+            <a href="/" class="btn btn-success">✅ 进入导出界面 →</a>
+            {% else %}
+            <button class="btn btn-primary" onclick="location.reload()" style="background:#444">🔄 刷新状态</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function copyCmd(el) {
+            navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+                const orig = el.style.borderColor;
+                el.style.borderColor = '#4caf50';
+                setTimeout(() => el.style.borderColor = orig, 1500);
+            });
+        }
+
+        async function doResign() {
+            const btn = document.getElementById('resignBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 执行中...';
+            try {
+                const resp = await fetch('/api/decrypt/resign', {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    btn.textContent = '✓ 完成';
+                    btn.className = 'btn btn-success';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    btn.textContent = '❌ 失败';
+                    alert(data.message);
+                    btn.disabled = false;
+                    btn.textContent = '🔓 重试';
+                }
+            } catch(e) {
+                alert('请求失败: ' + e.message + '\n请确保使用 sudo python3 app.py 启动');
+                btn.disabled = false;
+                btn.textContent = '🔓 重试';
+            }
+        }
+
+        function doCapture() {
+            const btn = document.getElementById('captureBtn');
+            const progress = document.getElementById('captureProgress');
+            const log = document.getElementById('captureLog');
+            btn.disabled = true;
+            btn.textContent = '⏳ 捕获中（等待微信重新登录）...';
+            progress.classList.add('show');
+
+            const es = new EventSource('/api/decrypt/capture');
+            es.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                const cls = data.type === 'error' ? 'error' : data.type === 'success' ? 'success' : data.type === 'action' ? 'action' : '';
+                log.innerHTML += `<div class="${cls}">${data.message}</div>`;
+                log.scrollTop = log.scrollHeight;
+
+                if (data.type === 'success' || data.type === 'error') {
+                    es.close();
+                    if (data.type === 'success') {
+                        btn.textContent = '✓ 捕获成功';
+                        btn.className = 'btn btn-success';
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = '🔑 重试';
+                    }
+                }
+            };
+            es.onerror = function() {
+                es.close();
+                btn.disabled = false;
+                btn.textContent = '🔑 重试';
+                log.innerHTML += '<div class="error">连接断开</div>';
+            };
+        }
+
+        function doDecrypt() {
+            const btn = document.getElementById('decryptBtn');
+            const progress = document.getElementById('decryptProgress');
+            const log = document.getElementById('decryptLog');
+            const fill = document.getElementById('decryptFill');
+            btn.disabled = true;
+            btn.textContent = '⏳ 解密中...';
+            progress.classList.add('show');
+
+            const es = new EventSource('/api/decrypt/run');
+            es.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                const cls = data.type === 'error' ? 'error' : data.type === 'done' ? 'success' : '';
+                log.innerHTML += `<div class="${cls}">${data.message}</div>`;
+                log.scrollTop = log.scrollHeight;
+
+                if (data.progress) {
+                    fill.style.width = data.progress + '%';
+                }
+
+                if (data.type === 'done') {
+                    es.close();
+                    fill.style.width = '100%';
+                    btn.textContent = '✅ 解密完成';
+                    btn.className = 'btn btn-success';
+                    setTimeout(() => location.reload(), 2000);
+                } else if (data.type === 'error') {
+                    es.close();
+                    btn.disabled = false;
+                    btn.textContent = '📦 重试';
+                }
+            };
+            es.onerror = function() {
+                es.close();
+                btn.disabled = false;
+                btn.textContent = '📦 重试';
+                log.innerHTML += '<div class="error">连接断开</div>';
+            };
+        }
+
+        // Auto-refresh status every 15s
+        setInterval(() => {
+            fetch('/api/status').then(r => r.json()).then(data => {
+                if (data.databases_decrypted) location.reload();
+            });
+        }, 15000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeChat Export</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>WeChat Export</h1>
+                <p class="subtitle">Chat History Exporter</p>
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                    <a href="/ai" id="aiBtn" onclick="return goAI()" style="padding:6px 14px;background:#5b6abf;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">🤖 AI 分析</a>
+                    <button onclick="syncMessages()" id="syncBtn" style="padding:6px 14px;background:#2a6a2a;color:#fff;border-radius:6px;font-size:13px;border:none;cursor:pointer;font-weight:500;" title="同步前请先退出并重新打开微信，确保最新消息被写入数据库">🔄 同步新消息</button>
+                </div>
+            </div>
+
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search contacts...">
+            </div>
+
+            <div class="sidebar-actions">
+                <button id="selectAllBtn" class="btn btn-secondary">Select All Visible</button>
+                <button id="deselectAllBtn" class="btn btn-ghost">Deselect All</button>
+            </div>
+
+            <div class="filter-tabs">
+                <button class="tab active" data-filter="all">All</button>
+                <button class="tab" data-filter="contacts">Contacts</button>
+                <button class="tab" data-filter="groups">Groups</button>
+            </div>
+
+            <div class="contacts-list" id="contactsList">
+                <div class="loading">Loading contacts...</div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="selection-info">
+                    <span id="selectedCount">0</span> selected
+                </div>
+                <div class="export-controls">
+                    <select id="exportFormat">
+                        <option value="html">HTML</option>
+                        <option value="txt">TXT</option>
+                        <option value="csv">CSV</option>
+                    </select>
+                    <button id="exportBtn" class="btn btn-primary" disabled>Export</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <div class="chat-panel" id="chatPanel">
+                <div class="empty-state">
+                    <div class="empty-icon">💬</div>
+                    <h2>Select a contact</h2>
+                    <p>Click on a contact to preview their messages</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Sync Modal -->
+    <div id="syncOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:#252535;border-radius:16px;padding:28px;max-width:500px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <h3 style="font-size:16px;margin-bottom:16px;color:#cdd6f4;">🔄 同步新消息</h3>
+            <div style="height:6px;background:#333;border-radius:3px;overflow:hidden;margin-bottom:12px;">
+                <div id="syncFill" style="height:100%;background:#5b6abf;border-radius:3px;transition:width 0.3s;width:0%"></div>
+            </div>
+            <div id="syncLog" style="max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:#aaa;line-height:1.8;"></div>
+        </div>
+    </div>
+
+    <script>
+    function goAI() {
+        // Get selected contacts from the checked checkboxes (div.checkbox.checked)
+        const selected = [];
+        document.querySelectorAll('.contact-item .checkbox.checked').forEach(cb => {
+            const item = cb.closest('.contact-item');
+            if (item && item.dataset.username) selected.push(item.dataset.username);
+        });
+
+        // If contacts are selected, pass them as URL params
+        if (selected.length > 0) {
+            const params = selected.map(u => 'contact=' + encodeURIComponent(u)).join('&');
+            window.location.href = '/ai?' + params;
+        } else {
+            // No selection, just go to AI page
+            window.location.href = '/ai';
+        }
+        return false; // prevent default <a> navigation
+    }
+
+    function syncMessages() {
+        const btn = document.getElementById('syncBtn');
+        const overlay = document.getElementById('syncOverlay');
+        const fill = document.getElementById('syncFill');
+        const log = document.getElementById('syncLog');
+
+        // Remind user to restart WeChat first
+        if (!confirm('同步前请确认：\n\n1. 先完全退出微信（Cmd+Q）\n2. 重新打开微信并登录\n3. 等待几秒让消息加载完成\n\n这样可以确保最新聊天记录被写入数据库。\n\n是否已完成以上步骤？')) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = '⏳ 同步中...';
+        overlay.style.display = 'flex';
+        fill.style.width = '0%';
+        log.innerHTML = '';
+
+        const es = new EventSource('/api/decrypt/sync');
+        es.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            const color = data.type === 'error' ? '#e57373' : data.type === 'done' ? '#81c784' : '#aaa';
+            const msgDiv = document.createElement('div');
+            msgDiv.style.color = color;
+            msgDiv.textContent = data.message;
+            log.appendChild(msgDiv);
+            log.scrollTop = log.scrollHeight;
+
+            if (data.progress) fill.style.width = data.progress + '%';
+
+            if (data.type === 'done' || data.type === 'error') {
+                es.close();
+                fill.style.width = '100%';
+                btn.disabled = false;
+                btn.textContent = '🔄 同步新消息';
+                if (data.type === 'done') {
+                    setTimeout(() => { overlay.style.display = 'none'; window.location.href = '/?refresh=1'; }, 2000);
+                } else {
+                    setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+                }
+            }
+        };
+        es.onerror = function() {
+            es.close();
+            btn.disabled = false;
+            btn.textContent = '🔄 同步新消息';
+            log.innerHTML += '<div style="color:#e57373">连接断开</div>';
+            setTimeout(() => { overlay.style.display = 'none'; }, 2000);
+        };
+    }
+    </script>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

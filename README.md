@@ -48,7 +48,7 @@ wechat-extract-mac/
 ### 启动
 
 ```bash
-cd ~/project/personal/wechat-extract-mac
+cd wechat-extract-mac
 sudo python3 app.py
 ```
 

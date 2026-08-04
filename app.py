@@ -491,6 +491,87 @@ def get_messages(username, limit=50, offset=0, skip_images=False):
     return messages
 
 
+def get_messages_by_timerange(username, time_from=0, time_to=0, limit=200):
+    """Get messages within a time range across all shards."""
+    tables = find_message_table(username)
+    if not tables:
+        return []
+
+    all_raw = []
+    for db_path, table_name in tables:
+        try:
+            self_id = _get_self_sender_id(db_path)
+            conn = get_db(db_path)
+            # Build WHERE clause for time range
+            conditions = []
+            params = []
+            if time_from:
+                conditions.append("create_time >= ?")
+                params.append(time_from)
+            if time_to:
+                conditions.append("create_time <= ?")
+                params.append(time_to)
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            cursor = conn.execute(
+                f"SELECT local_id, local_type, sort_seq, real_sender_id, "
+                f"create_time, message_content, WCDB_CT_message_content "
+                f"FROM [{table_name}] {where} ORDER BY create_time ASC",
+                params
+            )
+            for row in cursor:
+                all_raw.append((db_path, self_id, dict(row)))
+            conn.close()
+        except Exception:
+            continue
+
+    # Sort by time
+    all_raw.sort(key=lambda x: x[2]["create_time"] or 0)
+
+    # Limit
+    if len(all_raw) > limit:
+        # Sample evenly across the time range
+        step = len(all_raw) / limit
+        sampled = [all_raw[int(i * step)] for i in range(limit)]
+        all_raw = sampled
+
+    # Process
+    messages = []
+    for db_path, self_id, row in all_raw:
+        ct_type = row["WCDB_CT_message_content"] if row["WCDB_CT_message_content"] else 0
+        content = decode_message_content(row["message_content"], ct_type)
+        local_type = row["local_type"]
+        base_type = get_base_msg_type(local_type)
+
+        if base_type != 1:
+            display = get_message_type_label(local_type)
+        else:
+            display = content
+
+        # Resolve sender
+        sender_name = ""
+        is_self = row["real_sender_id"] == self_id
+        if is_self:
+            sender_name = "我"
+        elif "@chatroom" in username and isinstance(display, str) and ":\n" in display:
+            parts = display.split(":\n", 1)
+            sender_wxid = parts[0]
+            display = parts[1] if len(parts) > 1 else display
+            sender_name = _resolve_sender_name(sender_wxid)
+        elif "@chatroom" not in username:
+            sender_name = _get_contact_display_name(username)
+
+        messages.append({
+            "time": row["create_time"],
+            "time_str": datetime.fromtimestamp(row["create_time"]).strftime("%Y-%m-%d %H:%M:%S") if row["create_time"] else "",
+            "is_self": is_self,
+            "content": display,
+            "sender_name": sender_name,
+        })
+
+    return messages
+
+
 def get_all_messages(username):
     """Get ALL messages for a username across all shards (for export)."""
     tables = find_message_table(username)
@@ -878,6 +959,34 @@ def api_messages(username):
     offset = request.args.get("offset", 0, type=int)
     messages = get_messages(username, limit=limit, offset=offset)
     return jsonify(messages)
+
+
+@app.route("/api/messages/<path:username>/stats")
+def api_messages_stats(username):
+    """Return message stats for a contact: total count, date range."""
+    count = get_message_count(username)
+    last_time = get_last_message_time(username)
+    # Get first message time
+    tables = find_message_table(username)
+    first_time = 0
+    for db_path, table_name in tables:
+        try:
+            conn = get_db(db_path)
+            cursor = conn.execute(f"SELECT MIN(create_time) FROM [{table_name}]")
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                if first_time == 0 or row[0] < first_time:
+                    first_time = row[0]
+        except Exception:
+            continue
+    return jsonify({
+        "count": count,
+        "first_time": first_time,
+        "last_time": last_time,
+        "first_date": datetime.fromtimestamp(first_time).strftime("%Y-%m-%d") if first_time else "",
+        "last_date": datetime.fromtimestamp(last_time).strftime("%Y-%m-%d") if last_time else "",
+    })
 
 
 @app.route("/api/export", methods=["POST"])
@@ -1409,8 +1518,19 @@ def api_ai_chat():
         contact_map = {c["username"]: c for c in all_contacts}
         context_lines = []
 
+        # Time range filter (optional)
+        time_from = data.get("time_from", 0)  # unix timestamp
+        time_to = data.get("time_to", 0)  # unix timestamp
+        context_limit = data.get("context_limit", 200)  # max messages per contact
+
+        MAX_CONTEXT_CHARS = 50000  # Hard limit: ~25K tokens
+
         for uname in context_usernames:
-            chat_messages = get_messages(uname, limit=50, offset=0, skip_images=True)
+            # Load messages with time range if specified
+            if time_from or time_to:
+                chat_messages = get_messages_by_timerange(uname, time_from, time_to, limit=context_limit)
+            else:
+                chat_messages = get_messages(uname, limit=context_limit, offset=0, skip_images=True)
             if not chat_messages:
                 print(f"  [WARN] No messages found for: {uname}")
                 continue
@@ -1420,11 +1540,15 @@ def api_ai_chat():
 
             context_lines.append(f"\n--- 与「{display_name}」的最近聊天记录 ---\n")
             for msg in chat_messages:
-                sender = "我" if msg["is_self"] else display_name
+                sender = "我" if msg["is_self"] else (msg.get("sender_name") or display_name)
                 context_lines.append(f"[{msg['time_str']}] {sender}: {msg['content']}")
 
         if context_lines:
             system_content = "以下是用户选择的聊天记录（供分析参考）：\n" + "\n".join(context_lines)
+            # Truncate if too long
+            if len(system_content) > MAX_CONTEXT_CHARS:
+                system_content = system_content[:MAX_CONTEXT_CHARS] + "\n\n[... 聊天记录过长，已截断 ...]"
+                print(f"  [WARN] Context truncated to {MAX_CONTEXT_CHARS} chars")
             api_messages.append({"role": "system", "content": system_content})
             print(f"  System context: {len(system_content)} chars")
 

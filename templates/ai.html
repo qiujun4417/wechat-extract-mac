@@ -41,6 +41,8 @@
         .upload-btn:hover { background: var(--bg); }
         .attached-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; max-width: 800px; margin: 0 auto; }
         .file-pill { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; font-size: 12px; color: var(--text-dim); }
+        .time-range-btn { padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; font-size: 11px; cursor: pointer; color: var(--text-dim); transition: all 0.2s; }
+        .time-range-btn:hover { border-color: var(--accent); color: var(--accent); }
 
         /* === Chat Area === */
         .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -239,6 +241,9 @@
         let attachedImages = []; // {data: base64, name: filename}
         let currentSessionId = localStorage.getItem('ai_session_id') || null;
         let sessions = [];
+        let contextTimeFrom = 0;  // unix timestamp for time range filter
+        let contextTimeTo = 0;
+        let contextLimit = 200;   // max messages per contact to send
 
         // Init
         loadConfig();
@@ -434,6 +439,9 @@
                 // Send all selected contacts as context
                 if (selectedContacts.length > 0) {
                     body.context_usernames = selectedContacts.map(c => c.username);
+                    if (contextTimeFrom) body.time_from = contextTimeFrom;
+                    if (contextTimeTo) body.time_to = contextTimeTo;
+                    body.context_limit = contextLimit;
                 }
                 if (attachedFiles.length > 0) body.file_ids = attachedFiles.map(f => f.file_id);
                 if (attachedImages.length > 0) body.images = attachedImages;
@@ -649,10 +657,90 @@
         // Init mermaid
         mermaid.initialize({startOnLoad: false, theme: 'dark'});
 
-        function showContextBanner() {
+        async function showContextBanner() {
             hideWelcome();
-            renderChat();
+
+            // Fetch stats for selected contacts
+            let totalMessages = 0;
+            let firstDate = '', lastDate = '';
+            for (const c of selectedContacts) {
+                try {
+                    const resp = await fetch(`/api/messages/${encodeURIComponent(c.username)}/stats`);
+                    const stats = await resp.json();
+                    totalMessages += stats.count || 0;
+                    if (!firstDate || stats.first_date < firstDate) firstDate = stats.first_date;
+                    if (!lastDate || stats.last_date > lastDate) lastDate = stats.last_date;
+                } catch(e) {}
+            }
+
+            // Reset time range
+            contextTimeFrom = 0;
+            contextTimeTo = 0;
+            contextLimit = 200;
+
+            const names = selectedContacts.map(c => c.display_name || c.username);
+            const nameList = names.length <= 3 ? names.join('、') : names.slice(0, 3).join('、') + ` 等${names.length}个`;
+            const needTimeRange = totalMessages > 200;
+
+            let timeRangeHtml = '';
+            if (needTimeRange) {
+                timeRangeHtml = `
+                    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+                        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">⚠️ 消息量较大（${totalMessages.toLocaleString()} 条），建议选择时间范围：</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                            <span class="time-range-btn" onclick="setTimeRange(7)">最近7天</span>
+                            <span class="time-range-btn" onclick="setTimeRange(30)">最近30天</span>
+                            <span class="time-range-btn" onclick="setTimeRange(90)">最近3个月</span>
+                            <span class="time-range-btn" onclick="setTimeRange(180)">最近半年</span>
+                            <span class="time-range-btn" onclick="setTimeRange(0)">全部(采样)</span>
+                        </div>
+                        <div style="display:flex;gap:6px;margin-top:6px;align-items:center;font-size:12px;color:var(--text-dim);">
+                            <span>自定义:</span>
+                            <input type="date" id="timeFrom" value="${firstDate}" style="padding:3px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;">
+                            <span>~</span>
+                            <input type="date" id="timeTo" value="${lastDate}" style="padding:3px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;">
+                            <span class="time-range-btn" onclick="setCustomTimeRange()">应用</span>
+                        </div>
+                        <div id="timeRangeStatus" style="font-size:11px;color:#7fbf7f;margin-top:4px;"></div>
+                    </div>`;
+            }
+
+            const inner = document.getElementById('messagesInner');
+            inner.innerHTML = `<div class="msg-row ai"><div class="msg-bubble" style="background:#2a3a2a;border-color:#3a6b3a;">
+                <div style="font-size:13px;">✅ 已加载 <strong>${selectedContacts.length}</strong> 个对话（共 ${totalMessages.toLocaleString()} 条消息）：${esc(nameList)}</div>
+                ${timeRangeHtml}
+            </div></div>`;
         }
+
+        window.setTimeRange = (days) => {
+            if (days === 0) {
+                // Full range with sampling
+                contextTimeFrom = 0;
+                contextTimeTo = 0;
+                contextLimit = 200;
+                document.getElementById('timeRangeStatus').textContent = '✓ 全部消息（自动采样最多200条）';
+            } else {
+                const now = Math.floor(Date.now() / 1000);
+                contextTimeFrom = now - days * 86400;
+                contextTimeTo = now;
+                contextLimit = 500;  // Allow more within a focused range
+                document.getElementById('timeRangeStatus').textContent = `✓ 已选择最近 ${days} 天`;
+            }
+            // Highlight active button
+            document.querySelectorAll('.time-range-btn').forEach(b => b.style.background = 'var(--bg)');
+            event.target.style.background = 'var(--accent)';
+            event.target.style.color = '#fff';
+        };
+
+        window.setCustomTimeRange = () => {
+            const from = document.getElementById('timeFrom').value;
+            const to = document.getElementById('timeTo').value;
+            if (from) contextTimeFrom = Math.floor(new Date(from).getTime() / 1000);
+            if (to) contextTimeTo = Math.floor(new Date(to + 'T23:59:59').getTime() / 1000);
+            contextLimit = 500;
+            const status = document.getElementById('timeRangeStatus');
+            if (status) status.textContent = `✓ 已选择 ${from} ~ ${to}`;
+        };
 
         // === File Upload ===
         async function handleFileUpload(event) {

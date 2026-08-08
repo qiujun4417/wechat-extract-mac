@@ -132,6 +132,173 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* HTML preview card & modal */
+        .html-preview-card {
+            border: 1px dashed var(--accent);
+            border-radius: 10px;
+            padding: 14px 16px;
+            background: #1e2a4a;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .html-preview-card:hover { background: #2a3a5a; }
+        .html-preview-modal {
+            width: 95%;
+            max-width: 1200px;
+            height: 90vh;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .html-preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .html-preview-header .close-btn {
+            cursor: pointer;
+            font-size: 20px;
+            color: var(--text-dim);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .html-preview-header .close-btn:hover { background: var(--bg); }
+
+        /* === Enhanced HTML Preview === */
+        .html-preview-card {
+            border: 1px dashed var(--accent);
+            border-radius: 12px;
+            padding: 16px 18px;
+            background: linear-gradient(135deg, #1e2a4a 0%, #252540 100%);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .html-preview-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), #7b8adf, var(--accent));
+            opacity: 0.7;
+        }
+        .html-preview-card:hover {
+            background: linear-gradient(135deg, #2a3a5a 0%, #2a2a4a 100%);
+            border-color: #7b8adf;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(91, 106, 191, 0.2);
+        }
+        .html-preview-card:active {
+            transform: translateY(0);
+        }
+        .html-preview-badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            background: var(--accent);
+            color: #fff;
+            border-radius: 12px;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+        .html-preview-badge.chart { background: #e67e22; }
+        .html-preview-badge.svg { background: #9b59b6; }
+        .html-preview-badge.canvas { background: #3498db; }
+        .html-preview-badge.table { background: #27ae60; }
+        .html-preview-badge.form { background: #e74c3c; }
+        .html-preview-badge.media { background: #f39c12; }
+
+        .toolbar-btn {
+            padding: 8px 14px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .toolbar-btn:hover {
+            border-color: var(--accent);
+            background: #2a2a4a;
+            color: var(--accent);
+        }
+        .toolbar-btn:active {
+            transform: scale(0.96);
+        }
+
+        .html-preview-meta {
+            font-size: 12px;
+            color: var(--text-dim);
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .html-preview-meta span {
+            background: rgba(255,255,255,0.05);
+            padding: 3px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .html-preview-modal {
+            width: 95%;
+            max-width: 1200px;
+            height: 90vh;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .html-preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            background: var(--surface);
+        }
+        .html-preview-header .close-btn {
+            cursor: pointer;
+            font-size: 22px;
+            color: var(--text-dim);
+            padding: 6px 10px;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .html-preview-header .close-btn:hover { 
+            background: var(--bg); 
+            color: var(--accent);
+        }
+        #htmlPreviewFrame {
+            flex: 1;
+            border: none;
+            border-radius: 0 0 16px 16px;
+            background: #fff;
+        }
+
+        .html-empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-dim);
+        }
+        .html-empty-state .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
+        #htmlPreviewFrame {
+            flex: 1;
+            border: none;
+            border-radius: 0 0 16px 16px;
+            background: #fff;
+        }
     </style>
 </head>
 <body>
@@ -224,6 +391,26 @@
             <div class="contact-list" id="contactList">
                 <div style="text-align:center;color:var(--text-dim);padding:40px">加载中...</div>
             </div>
+        </div>
+    </div>
+
+    <!-- HTML Preview Modal -->
+    <div class="modal-overlay" id="htmlPreviewModal" onclick="closeHtmlPreview()">
+        <div class="modal html-preview-modal" onclick="event.stopPropagation()">
+            <div class="html-preview-header">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span style="font-weight:600;font-size:16px;">🌐 HTML 预览</span>
+                    <span id="htmlPreviewBadge" class="html-preview-badge">页面</span>
+                    <span id="htmlPreviewSize" style="font-size:12px;color:var(--text-dim);"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button class="toolbar-btn" onclick="copyCurrentHtml()" title="复制 HTML 代码">📋 复制</button>
+                    <button class="toolbar-btn" onclick="downloadCurrentHtml()" title="下载 HTML 文件">💾 下载</button>
+                    <button class="toolbar-btn" onclick="openCurrentHtmlInNewTab()" title="在新标签页打开">↗️ 打开</button>
+                    <span class="close-btn" onclick="closeHtmlPreview()">✕</span>
+                </div>
+            </div>
+            <iframe id="htmlPreviewFrame" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
 
@@ -556,7 +743,45 @@
                             </details>`;
                         }
                         if (content) {
-                            bubbleHtml += renderMarkdown(content);
+                            const htmlResult = extractFullHtml(content);
+                            if (htmlResult) {
+                                chatHistory[i]._htmlContent = htmlResult.html;
+                                const type = detectHtmlType(htmlResult.html);
+                                const typeIcons = {
+                                    '图表': '📊', 'SVG': '🎨', 'Canvas': '🖼️',
+                                    '表格': '📋', '表单': '📝', '媒体': '🎬',
+                                    '嵌入': '🔗', '页面': '🌐'
+                                };
+                                const icon = typeIcons[type] || '🌐';
+                                const size = htmlResult.html.length;
+                                const sizeLabel = size > 1024 ? `${(size/1024).toFixed(1)} KB` : `${size} B`;
+
+                                bubbleHtml += `<div class="html-preview-card" onclick="openHtmlPreview(${i})">
+                                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                                        <span style="font-size:28px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3));">${icon}</span>
+                                        <div style="flex:1;min-width:0;">
+                                            <div style="font-size:15px;font-weight:600;margin-bottom:3px;display:flex;align-items:center;gap:8px;">
+                                                AI 生成了 ${type} 可视化
+                                                <span class="html-preview-badge ${type.toLowerCase()}">${type}</span>
+                                            </div>
+                                            <div style="font-size:12px;color:var(--text-dim);">点击预览 · ${sizeLabel} · ${size.toLocaleString()} 字符</div>
+                                        </div>
+                                        <span style="font-size:20px;color:var(--accent);opacity:0.6;">→</span>
+                                    </div>
+                                    <div class="html-preview-meta">
+                                        <span>🖱️ 点击预览</span>
+                                        <span>📋 支持复制代码</span>
+                                        <span>💾 支持下载文件</span>
+                                    </div>
+                                </div>`;
+
+                                // Render remaining text as markdown if any
+                                if (htmlResult.remaining) {
+                                    bubbleHtml += renderMarkdown(htmlResult.remaining);
+                                }
+                            } else {
+                                bubbleHtml += renderMarkdown(content);
+                            }
                         } else if (thinking && !content) {
                             // Still thinking, no content yet
                             bubbleHtml += `<div class="typing-indicator" style="margin-top:4px"><span></span><span></span><span></span></div>`;
@@ -641,6 +866,170 @@
             return d.innerHTML;
         }
 
+                // === Enhanced HTML Detection & Preview ===
+        let currentPreviewHtml = '';
+        let currentPreviewIndex = -1;
+
+        function extractFullHtml(text) {
+            if (!text) return null;
+
+            // Strategy 1: Markdown code fence ```html ... ```
+            const fenceRegex = /```(?:html|HTML)\s*\n?([\s\S]*?)\n```/;
+            const fenceMatch = text.match(fenceRegex);
+            if (fenceMatch) {
+                const html = fenceMatch[1].trim();
+                if (isValidHtml(html)) {
+                    const remaining = text.replace(fenceMatch[0], '').trim();
+                    return { html, remaining };
+                }
+            }
+
+            // Strategy 2: Standalone HTML document anywhere in text
+            const docRegex = /(<!DOCTYPE html>[\s\S]*?<\/html>|<html\b[\s\S]*?<\/html>)/i;
+            const docMatch = text.match(docRegex);
+            if (docMatch) {
+                const html = docMatch[0].trim();
+                if (isValidHtml(html)) {
+                    const remaining = text.replace(docMatch[0], '').trim();
+                    return { html, remaining };
+                }
+            }
+
+            // Strategy 3: Body content wrapped as full document
+            const bodyMatch = text.match(/<body\b([\s\S]*?)<\/body>/i);
+            if (bodyMatch && bodyMatch[0].length > 300) {
+                const html = `<!DOCTYPE html>\n<html lang="zh-CN">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AI 生成预览</title></head>\n${bodyMatch[0]}\n</html>`;
+                const remaining = text.replace(bodyMatch[0], '').trim();
+                return { html, remaining };
+            }
+
+            // Strategy 4: Rich HTML fragment with scripts/styles (ECharts, etc.)
+            const fragmentRegex = /(<div\b[\s\S]*?<script[\s\S]*?<\/script>[\s\S]*?<\/div>)/i;
+            const fragMatch = text.match(fragmentRegex);
+            if (fragMatch && fragMatch[0].length > 500 && /echarts|chart\.js|plotly|d3/i.test(fragMatch[0])) {
+                const html = `<!DOCTYPE html>\n<html lang="zh-CN">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AI 生成图表</title></head>\n<body>\n${fragMatch[0]}\n</body>\n</html>`;
+                const remaining = text.replace(fragMatch[0], '').trim();
+                return { html, remaining };
+            }
+
+            return null;
+        }
+
+        function isValidHtml(str) {
+            if (str.length < 100) return false;
+            const indicators = [
+                /^<!DOCTYPE html/i, /^<html\b/i, /<head\b/i, /<body\b/i,
+                /<script\b/i, /<style\b/i, /<div\b/i, /<svg\b/i,
+                /<canvas\b/i, /<table\b/i, /echarts|chart\.js|plotly|d3|highcharts/i
+            ];
+            let score = 0;
+            for (const re of indicators) {
+                if (re.test(str)) score++;
+            }
+            return score >= 2;
+        }
+
+        function detectHtmlType(html) {
+            if (!html) return '页面';
+            if (/echarts|chart\.js|plotly|d3|highcharts|canvas|svg.*chart/i.test(html)) return '图表';
+            if (/<svg[\s\S]*?<\/svg>/i.test(html) && html.length < 10000) return 'SVG';
+            if (/<canvas\b/i.test(html)) return 'Canvas';
+            if (/<table\b/i.test(html) && !/<script\b/i.test(html)) return '表格';
+            if (/<form\b/i.test(html)) return '表单';
+            if (/<video\b|<audio\b/i.test(html)) return '媒体';
+            if (/<iframe\b/i.test(html)) return '嵌入';
+            return '页面';
+        }
+
+        function injectBaseStyles(html) {
+            if (!html) return html;
+            if (!/^<!DOCTYPE html/i.test(html) && !/^<html\b/i.test(html)) return html;
+
+            if (!html.includes('viewport') || !html.includes('width=device-width')) {
+                html = html.replace(/<head\b/i, '<head>\n<meta name="viewport" content="width=device-width, initial-scale=1.0">');
+            }
+
+            const hasStyle = html.includes('<style') || html.includes('stylesheet') || html.includes('tailwind') || html.includes('bootstrap');
+            if (!hasStyle) {
+                const baseStyle = `<style>
+                :root { color-scheme: dark; }
+                body { 
+                    background: #1e1e2e; 
+                    color: #cdd6f4; 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+                    margin: 0; 
+                    padding: 20px; 
+                    line-height: 1.6;
+                }
+                a { color: #5b6abf; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #444; padding: 8px; text-align: left; }
+                th { background: #252535; }
+                ::-webkit-scrollbar { width: 8px; }
+                ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+                </style>`;
+                html = html.replace(/<head\b([\s\S]*?)<\/head>/i, `<head$1${baseStyle}</head>`);
+            }
+            return html;
+        }
+
+        window.openHtmlPreview = (index) => {
+            const msg = chatHistory[index];
+            if (!msg || !msg._htmlContent) return;
+            currentPreviewHtml = msg._htmlContent;
+            currentPreviewIndex = index;
+
+            const type = detectHtmlType(currentPreviewHtml);
+            const badge = document.getElementById('htmlPreviewBadge');
+            badge.textContent = type;
+            badge.className = 'html-preview-badge ' + type.toLowerCase();
+
+            const sizeEl = document.getElementById('htmlPreviewSize');
+            sizeEl.textContent = `${currentPreviewHtml.length.toLocaleString()} 字符`;
+
+            const frame = document.getElementById('htmlPreviewFrame');
+            const styledHtml = injectBaseStyles(currentPreviewHtml);
+            frame.srcdoc = styledHtml;
+            document.getElementById('htmlPreviewModal').classList.add('show');
+        };
+
+        window.closeHtmlPreview = () => {
+            document.getElementById('htmlPreviewModal').classList.remove('show');
+            document.getElementById('htmlPreviewFrame').srcdoc = '';
+            currentPreviewHtml = '';
+            currentPreviewIndex = -1;
+        };
+
+        window.copyCurrentHtml = () => {
+            if (!currentPreviewHtml) return;
+            navigator.clipboard.writeText(currentPreviewHtml).then(() => showToast('✅ HTML 代码已复制到剪贴板'));
+        };
+
+        window.downloadCurrentHtml = () => {
+            if (!currentPreviewHtml) return;
+            const blob = new Blob([currentPreviewHtml], {type: 'text/html;charset=utf-8'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const type = detectHtmlType(currentPreviewHtml);
+            a.download = `ai-${type.toLowerCase()}-${Date.now()}.html`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
+            showToast('💾 HTML 文件已下载');
+        };
+
+        window.openCurrentHtmlInNewTab = () => {
+            if (!currentPreviewHtml) return;
+            const styledHtml = injectBaseStyles(currentPreviewHtml);
+            const blob = new Blob([styledHtml], {type: 'text/html;charset=utf-8'});
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+            showToast('↗️ 已在新标签页打开');
+        };
         function showToast(msg) {
             let t = document.getElementById('toast');
             if (!t) {

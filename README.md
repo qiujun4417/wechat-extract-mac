@@ -43,18 +43,40 @@ wechat-extract-mac/
 - macOS (Apple Silicon / Intel)
 - Python 3.10+
 - WeChat Mac 4.x 已安装并登录
-- Flask: `pip3 install flask`
+- [uv](https://docs.astral.sh/uv/) 已安装
 
 ### 启动
 
 ```bash
 cd wechat-extract-mac
-sudo python3 app.py
+./run.sh
+```
+
+或者手动通过 uv 启动：
+
+```bash
+uv sync
+sudo $(uv run python -c "import sys; print(sys.executable)") app.py
 ```
 
 打开浏览器访问：**http://127.0.0.1:9527**
 
 > ⚠️ 需要 `sudo` 权限用于：重签名微信、LLDB 密钥捕获、解密数据库
+
+### 没有 uv 怎么办
+
+项目也保留了 `requirements.txt`，可以直接用 pip 安装依赖：
+
+```bash
+pip3 install -r requirements.txt
+sudo python3 app.py
+```
+
+### 用 uv 生成 / 更新 requirements.txt
+
+```bash
+uv export --no-dev --no-hashes -o requirements.txt
+```
 
 ### 首次使用流程（全部在网页完成）
 
@@ -210,16 +232,35 @@ WeChat Mac 按时间将消息分散到多个数据库：
 - 如果 API Key 曾被提交到 git，请立即轮换
 - 如需远程访问，建议添加 token 认证或 nginx 反代 + basic auth
 - 定期清理 `ai_sessions.json` 中的历史对话数据
-- 开发调试时可用 `FLASK_DEBUG=1 sudo python3 app.py` 启用调试模式
+- 开发调试时可用 `FLASK_DEBUG=1 ./run.sh` 启用调试模式
 
 ## 依赖
 
+主要依赖声明在 `pyproject.toml`，由 [uv](https://docs.astral.sh/uv/) 管理：
+
+```bash
+uv sync
+```
+
+同时保留 `requirements.txt` 以兼容未安装 uv 的用户：
+
+```bash
+pip3 install -r requirements.txt
+```
+
 - Python 3.10+
 - Flask
-- pycryptodome (解密用，如不用内置 CommonCrypto)
+- requests
+- zstandard
 - lldb (随 Xcode Command Line Tools 安装)
 
 ## Changelog
+
+### 2026-08-08
+
+- **uv 依赖管理** — 新增 `pyproject.toml` 与 `uv.lock`，默认通过 `./run.sh` 启动
+- **保留 pip 兼容** — 保留 `requirements.txt`，支持 `pip3 install -r requirements.txt`
+- **一键启动脚本** — 新增 `run.sh`，自动 `uv sync` 并用 sudo 启动应用
 
 ### 2026-08-04
 

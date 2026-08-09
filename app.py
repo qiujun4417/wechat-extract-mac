@@ -23,8 +23,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
 # Paths
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(PROJECT_DIR, "config")
+os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_BASE = os.path.join(PROJECT_DIR, "decrypted")
-KEYS_FILE = os.path.join(PROJECT_DIR, "all_keys.json")
+KEYS_FILE = os.path.join(CONFIG_DIR, "all_keys.json")
+CONTACTS_CACHE_FILE = os.path.join(CONFIG_DIR, "contacts_cache.json")
 PASSPHRASE_FILE = os.path.expanduser("~/.wcdb-key-tool/wechat-passphrase.json")
 WCDB_TOOL = os.path.join(PROJECT_DIR, "decrypt_core.py")
 WECHAT_DATA_BASE = os.path.expanduser(
@@ -820,6 +823,40 @@ def _push_event(event_data):
             _event_subscribers.remove(q)
 
 
+def _rebuild_contacts_cache():
+    """Rebuild the contacts JSON cache file after sync."""
+    try:
+        contacts = get_all_contacts()
+        enriched = []
+        for c in contacts:
+            count = get_message_count(c["username"])
+            if count == 0:
+                continue
+            last_time = get_last_message_time(c["username"])
+            c["message_count"] = count
+            c["last_active"] = (
+                datetime.fromtimestamp(last_time).strftime("%Y-%m-%d")
+                if last_time else ""
+            )
+            c["last_active_ts"] = last_time
+            display_name = c["remark"] or c["nick_name"] or c["username"]
+            c["display_name"] = display_name
+            enriched.append(c)
+        enriched.sort(key=lambda x: x["last_active_ts"], reverse=True)
+
+        cache_data = {
+            "updated_at": int(time.time()),
+            "contacts": enriched
+        }
+        with open(CONTACTS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+        print(f"[Cache] Contacts cache updated: {len(enriched)} contacts")
+        return enriched
+    except Exception as e:
+        print(f"[Cache] Failed to rebuild contacts cache: {e}")
+        return None
+
+
 @app.route("/api/events")
 def api_events():
     """SSE endpoint for real-time push notifications to the frontend.
@@ -1044,8 +1081,12 @@ def api_decrypt_sync():
         _stats_cache = None
         MESSAGE_DBS, BIZ_MESSAGE_DBS = _discover_message_dbs()
 
+        # Rebuild contacts cache after sync
+        _rebuild_contacts_cache()
+
         # Push real-time event to all connected clients
         _push_event({"type": "sync_complete", "new_messages": success})
+        _push_event({"type": "contacts_updated"})
 
         yield f"data: {json.dumps({'type': 'done', 'message': f'✅ 同步完成！成功 {success} 个数据库', 'success': success, 'failed': failed})}\n\n"
 
@@ -1054,6 +1095,25 @@ def api_decrypt_sync():
         mimetype="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+@app.route("/api/contacts/cached")
+def api_contacts_cached():
+    """Return contacts from JSON cache for fast page loads."""
+    try:
+        if os.path.exists(CONTACTS_CACHE_FILE):
+            with open(CONTACTS_CACHE_FILE, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+            return jsonify(cache_data)
+    except (json.JSONDecodeError, IOError, KeyError) as e:
+        print(f"[Cache] Cache file corrupted or unreadable, falling through to DB: {e}")
+
+    # Cache miss or error — fall through to full query and build cache
+    enriched = _rebuild_contacts_cache()
+    if enriched is not None:
+        return jsonify({"updated_at": int(time.time()), "contacts": enriched})
+    # If rebuild also failed, return empty
+    return jsonify({"updated_at": 0, "contacts": []})
 
 
 @app.route("/api/contacts")
@@ -1085,6 +1145,18 @@ def api_contacts():
         enriched.append(c)
     # Sort by last active time (most recent first)
     enriched.sort(key=lambda x: x["last_active_ts"], reverse=True)
+
+    # Update the JSON cache file
+    try:
+        cache_data = {
+            "updated_at": int(time.time()),
+            "contacts": enriched
+        }
+        with open(CONTACTS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[Cache] Failed to write contacts cache: {e}")
+
     return jsonify(enriched)
 
 
@@ -1434,8 +1506,8 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 # ===== AI Chat Feature =====
 
-AI_CONFIG_FILE = os.path.join(PROJECT_DIR, "ai_config.json")
-AI_SESSIONS_FILE = os.path.join(PROJECT_DIR, "ai_sessions.json")
+AI_CONFIG_FILE = os.path.join(CONFIG_DIR, "ai_config.json")
+AI_SESSIONS_FILE = os.path.join(CONFIG_DIR, "ai_sessions.json")
 
 # In-memory session store: {session_id: {messages: [...], contacts: [...], title: str, updated: timestamp}}
 _ai_sessions = {}
@@ -1885,7 +1957,7 @@ SCRAPE_DIR = os.path.join(PROJECT_DIR, "scraped_articles")
 _scrape_jobs = {}  # {job_id: {status, ...}}
 
 # Scraper session persistence (similar to AI sessions)
-SCRAPER_SESSIONS_FILE = os.path.join(PROJECT_DIR, "scraper_sessions.json")
+SCRAPER_SESSIONS_FILE = os.path.join(CONFIG_DIR, "scraper_sessions.json")
 _scraper_sessions = {}
 
 
@@ -2132,7 +2204,16 @@ def api_articles_analyze():
         prompt = (
             "给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，"
             "然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 "
-            "JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。"
+            "JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。\n\n"
+            "【重要】HTML 输出需要兼容 PDF 导出（通过浏览器打印），请遵守以下规范：\n"
+            "1. 使用深色背景（#1a1a2e 或类似）作为默认主题，PDF 导出时保留原始深色样式\n"
+            "2. 每个图表/卡片/section 添加 CSS: break-inside: avoid; page-break-inside: avoid; "
+            "防止分页时被切割\n"
+            "3. ECharts 图表使用 SVG 渲染器（renderer: 'svg'）而非默认 Canvas，"
+            "这样导出 PDF 时图表是矢量的、清晰可缩放\n"
+            "4. 图表容器设置明确的高度（如 300px-400px），不要用百分比高度\n"
+            "5. 所有文字使用 system-ui 字体栈，确保中文渲染正确\n"
+            "6. 页面整体宽度控制在 800px 以内居中显示，适配 A4 纸张宽度"
         )
 
     # Load scraped articles
@@ -2190,6 +2271,16 @@ def api_articles_analyze():
 
     articles_context = "\n\n".join(article_text_parts)
 
+    # System instructions for HTML generation quality
+    html_system_guidance = (
+        "当输出 HTML 可视化时，请遵守以下技术规范以确保导出 PDF 的质量：\n"
+        "1. ECharts 使用 SVG 渲染器: init(dom, null, {renderer: 'svg'})\n"
+        "2. 每个图表/卡片添加 break-inside: avoid 防止分页切割\n"
+        "3. PDF导出时保留原始样式（深色背景保持深色），不需要添加 @media print 白底覆盖\n"
+        "4. 图表容器使用固定高度（300-400px），不用百分比\n"
+        "5. 页面内容宽度控制在 800px 以内，适配 A4"
+    )
+
     # Support follow-up conversation: if messages array provided, use it
     conversation_messages = data.get("messages", [])
     if conversation_messages:
@@ -2197,6 +2288,7 @@ def api_articles_analyze():
         api_messages = [
             {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
             {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+            {"role": "system", "content": html_system_guidance},
         ]
         for msg in conversation_messages:
             role = msg.get("role", "user")
@@ -2209,6 +2301,7 @@ def api_articles_analyze():
         api_messages = [
             {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
             {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+            {"role": "system", "content": html_system_guidance},
             {"role": "user", "content": prompt},
         ]
 

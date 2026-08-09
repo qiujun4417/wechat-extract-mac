@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>公众号文章分析</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- html2pdf.js removed: using browser native print-to-PDF for much better quality -->
+    <script src="/static/theme.js"></script>
     <style>
-        :root {
+        /* Dark theme (default) */
+        :root, [data-theme="dark"] {
             --bg: #1e1e2e;
             --bg-dark: #181825;
             --surface: #252536;
@@ -23,6 +25,43 @@
             --error: #f38ba8;
             --radius: 8px;
             --radius-lg: 12px;
+            --badge-text: #1e1e2e;
+        }
+        /* Light theme */
+        [data-theme="light"] {
+            --bg: #f5f5f7;
+            --bg-dark: #ffffff;
+            --surface: #e8e8ed;
+            --surface-hover: #dcdce2;
+            --border: #d1d1d6;
+            --text: #1d1d1f;
+            --text-dim: #48484a;
+            --text-muted: #8e8e93;
+            --accent: #0071e3;
+            --accent-hover: #0077ed;
+            --success: #34c759;
+            --warning: #ff9f0a;
+            --error: #ff3b30;
+            --badge-text: #ffffff;
+        }
+        /* Auto-detect OS preference when no explicit theme set */
+        @media (prefers-color-scheme: light) {
+            :root:not([data-theme="dark"]) {
+                --bg: #f5f5f7;
+                --bg-dark: #ffffff;
+                --surface: #e8e8ed;
+                --surface-hover: #dcdce2;
+                --border: #d1d1d6;
+                --text: #1d1d1f;
+                --text-dim: #48484a;
+                --text-muted: #8e8e93;
+                --accent: #0071e3;
+                --accent-hover: #0077ed;
+                --success: #34c759;
+                --warning: #ff9f0a;
+                --error: #ff3b30;
+                --badge-text: #ffffff;
+            }
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -141,7 +180,7 @@
             border-color: var(--accent);
         }
         .account-item.selected .checkbox::after {
-            content: "✓"; color: #1e1e2e; font-size: 10px; font-weight: 700;
+            content: "✓"; color: var(--badge-text); font-size: 10px; font-weight: 700;
         }
         .account-avatar {
             width: 32px; height: 32px;
@@ -203,7 +242,7 @@
         .section-header .toggle.collapsed { transform: rotate(-90deg); }
         .section-header .badge {
             background: var(--accent);
-            color: #1e1e2e;
+            color: var(--badge-text);
             font-size: 11px;
             font-weight: 700;
             padding: 2px 7px;
@@ -273,7 +312,7 @@
         }
         .btn-primary {
             background: var(--accent);
-            color: #1e1e2e;
+            color: var(--badge-text);
             font-weight: 600;
         }
         .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
@@ -365,32 +404,32 @@
 
         /* Follow-up input bar */
         .followup-bar {
-            padding: 12px 16px;
+            padding: 14px 16px;
             background: var(--bg-dark);
             border-top: 1px solid var(--border);
             display: flex;
-            gap: 8px;
+            gap: 10px;
             align-items: flex-end;
         }
         .followup-bar textarea {
             flex: 1;
-            min-height: 38px;
-            max-height: 120px;
-            padding: 8px 12px;
+            min-height: 60px;
+            max-height: 240px;
+            padding: 10px 14px;
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--radius);
             color: var(--text);
-            font-size: 13px;
+            font-size: 14px;
             font-family: inherit;
-            resize: none;
+            resize: vertical;
             outline: none;
-            line-height: 1.5;
+            line-height: 1.6;
         }
         .followup-bar textarea:focus { border-color: var(--accent); }
         .followup-bar button {
-            padding: 8px 16px;
-            height: 38px;
+            padding: 10px 20px;
+            height: 40px;
         }
 
         /* AI Streaming */
@@ -497,7 +536,7 @@
         .time-tab:hover { background: var(--surface-hover); color: var(--text); }
         .time-tab.active {
             background: var(--accent);
-            color: #1e1e2e;
+            color: var(--badge-text);
             border-color: var(--accent);
             font-weight: 600;
         }
@@ -520,7 +559,7 @@
         .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
         .pagination button.active {
             background: var(--accent);
-            color: #1e1e2e;
+            color: var(--badge-text);
             border-color: var(--accent);
         }
         .pagination .page-info { font-size: 11px; color: var(--text-muted); }
@@ -558,6 +597,7 @@
         <div class="session-controls">
             <select id="sessionSelect" onchange="switchSession(this.value)"></select>
             <button class="btn-sm" onclick="newSession()">➕ 新建</button>
+            <button class="btn-sm" id="themeToggle" onclick="toggleTheme()" title="切换主题">🌙</button>
         </div>
     </div>
 
@@ -722,7 +762,7 @@
                         <div class="preview-toolbar">
                             <button class="btn btn-secondary" onclick="copyHtml()">📋 复制 HTML</button>
                             <button class="btn btn-secondary" onclick="downloadHtml()">💾 下载 HTML</button>
-                            <button class="btn btn-secondary" onclick="downloadPdf()">📄 下载 PDF</button>
+                            <button class="btn btn-secondary" onclick="downloadPdf()">📄 下载 PDF (高清)</button>
                             <button class="btn btn-primary" onclick="openInNewTab()">🔗 新窗口打开</button>
                         </div>
                         <iframe id="previewFrame" class="html-preview-frame"
@@ -923,8 +963,17 @@
         // ===== Load Official Accounts =====
         async function loadAccounts() {
             try {
-                const resp = await fetch('/api/contacts');
-                const contacts = await resp.json();
+                // Try cache first for instant render
+                let contacts;
+                const cacheResp = await fetch('/api/contacts/cached');
+                if (cacheResp.ok) {
+                    const cached = await cacheResp.json();
+                    contacts = cached.contacts || cached;
+                } else {
+                    // Fall back to full query
+                    const resp = await fetch('/api/contacts');
+                    contacts = await resp.json();
+                }
                 accounts = contacts.filter(c => c.is_official);
                 renderAccounts();
             } catch (e) {
@@ -1514,27 +1563,87 @@
         };
         window.downloadPdf = function() {
             if (!generatedHtml) return;
-            // Use html2pdf.js to convert iframe content to PDF
-            const frame = document.getElementById('previewFrame');
-            const frameDoc = frame.contentDocument || frame.contentWindow.document;
-            if (!frameDoc || !frameDoc.body) {
-                showToast('PDF 生成失败：无法访问预览内容');
+            // Open a new window with the original HTML and trigger print dialog
+            // Uses browser's native PDF rendering — preserves original theme exactly
+            const printHtml = injectPrintStyles(generatedHtml);
+            const printWin = window.open('', '_blank');
+            if (!printWin) {
+                showToast('弹窗被拦截，请允许弹窗后重试');
                 return;
             }
-            showToast('正在生成 PDF...');
-            const opt = {
-                margin: 10,
-                filename: `article_analysis_${Date.now()}.pdf`,
-                image: { type: 'jpeg', quality: 0.95 },
-                html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            printWin.document.write(printHtml);
+            printWin.document.close();
+            // Wait for charts/scripts to render, then trigger print
+            showToast('请在打印对话框中勾选「背景图形」以保留原始样式');
+            printWin.onload = function() {
+                setTimeout(() => {
+                    printWin.print();
+                }, 1500); // Allow ECharts/Chart.js to finish rendering
             };
-            html2pdf().set(opt).from(frameDoc.body).save().then(() => {
-                showToast('PDF 已下载');
-            }).catch(e => {
-                showToast('PDF 生成失败: ' + e.message);
-            });
+            // Fallback if onload doesn't fire (some browsers)
+            setTimeout(() => {
+                if (!printWin.closed) {
+                    printWin.print();
+                }
+            }, 3000);
         };
+
+        // Inject @media print styles into the generated HTML for optimal PDF output
+        // Preserves original theme (dark/light) — only adds pagination control and background printing
+        function injectPrintStyles(html) {
+            const printCSS = `
+<style id="pdf-print-optimization">
+/* ===== Print / PDF Export Optimization ===== */
+/* Preserve original colors (dark or light) — print exactly as displayed */
+@media print {
+    html, body {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+    }
+
+    /* Ensure charts/sections don't get cut across pages */
+    .chart-container, .echarts-container, .card, section,
+    [class*="chart"], [class*="section"], [class*="card"],
+    canvas, svg, table, figure {
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+    }
+
+    /* Keep headings with their content */
+    h1, h2, h3, h4 {
+        break-after: avoid !important;
+        page-break-after: avoid !important;
+    }
+
+    /* Hide interactive-only elements */
+    button, .toolbar, [class*="toolbar"], .tooltip {
+        display: none !important;
+    }
+
+    /* Proper margins */
+    @page {
+        margin: 10mm;
+        size: A4;
+    }
+
+    /* Prevent massive empty trailing pages */
+    body {
+        min-height: auto !important;
+        height: auto !important;
+    }
+}
+</style>`;
+
+            // Inject before </head> or before </body>
+            if (html.includes('</head>')) {
+                return html.replace('</head>', printCSS + '\n</head>');
+            } else if (html.includes('</body>')) {
+                return html.replace('</body>', printCSS + '\n</body>');
+            } else {
+                return html + printCSS;
+            }
+        }
         window.openInNewTab = function() {
             if (!generatedHtml) return;
             const blob = new Blob([generatedHtml], {type: 'text/html'});

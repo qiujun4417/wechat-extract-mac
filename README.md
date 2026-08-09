@@ -21,19 +21,27 @@
 wechat-extract-mac/
 ├── app.py                 # Flask 主应用 (端口 9527)
 ├── decrypt_core.py        # 解密引擎 (从 wcdb-key-tool 集成)
-├── ai_config.json         # AI API 配置 (.gitignore)
-├── ai_sessions.json       # AI 对话 Session 持久化 (.gitignore)
-├── all_keys.json          # 数据库密钥缓存 (.gitignore)
-├── .gitignore             # 排除敏感文件
-├── README.md              # 文档
+├── scraper.py             # 公众号文章爬虫模块
+├── config/                # 运行时配置与数据 (.gitignore)
+│   ├── ai_config.json     # AI API 配置
+│   ├── ai_sessions.json   # AI 对话会话持久化
+│   ├── all_keys.json      # 数据库解密密钥缓存
+│   ├── contacts_cache.json# 联系人/公众号列表缓存
+│   └── scraper_sessions.json # 公众号分析会话
 ├── decrypted/             # 解密后的数据库文件 (.gitignore)
+├── scraped_articles/      # 爬取的文章内容 (.gitignore)
+├── tests/                 # 单元测试
+│   ├── test_scraper.py    # 爬虫模块测试
+│   └── test_pdf_export.py # PDF 导出功能测试
 ├── templates/
 │   ├── index.html         # 导出主页面
 │   ├── setup.html         # 引导/解密页面
-│   └── ai.html            # AI 分析页面
+│   ├── ai.html            # AI 分析页面
+│   └── scraper.html       # 公众号文章分析页面
 └── static/
-    ├── style.css          # 样式
-    └── app.js             # 前端逻辑
+    ├── style.css          # 全局样式 (支持 dark/light)
+    ├── app.js             # 前端逻辑
+    └── theme.js           # 主题切换模块
 ```
 
 ## 快速开始
@@ -231,7 +239,7 @@ WeChat Mac 按时间将消息分散到多个数据库：
 
 - 如果 API Key 曾被提交到 git，请立即轮换
 - 如需远程访问，建议添加 token 认证或 nginx 反代 + basic auth
-- 定期清理 `ai_sessions.json` 中的历史对话数据
+- 定期清理 `config/ai_sessions.json` 中的历史对话数据
 - 开发调试时可用 `FLASK_DEBUG=1 ./run.sh` 启用调试模式
 
 ## 依赖
@@ -255,6 +263,26 @@ pip3 install -r requirements.txt
 - lldb (随 Xcode Command Line Tools 安装)
 
 ## Changelog
+
+### 2026-08-09 (v2)
+
+- **全局 Dark/Light 主题** — 新增 `static/theme.js` 共享模块，index / ai / scraper 三个页面统一支持主题切换
+  - 侧边栏、主内容区、聊天气泡、toast 等全部适配双主题
+  - 自动检测系统 `prefers-color-scheme` 偏好，首次访问跟随 OS
+  - 主题选择持久化到 `localStorage`，跨页面同步
+- **PDF 导出优化** — 移除 html2pdf.js，改用浏览器原生 `window.print()` 导出
+  - 矢量文字可搜索、图表清晰、文件更小
+  - 保留原始主题样式（dark 模式输出 dark PDF）
+  - 注入 `break-inside: avoid` 防止图表被分页切割
+  - AI Prompt 指导使用 SVG 渲染器、固定图表高度、A4 宽度
+- **联系人 JSON 缓存** — 新增 `/api/contacts/cached` 端点
+  - 首次加载直接读 JSON 文件（毫秒级响应）
+  - 后台同步完成后自动重建缓存
+  - 缓存损坏时自动降级为数据库查询
+- **config/ 目录整理** — 所有运行时 JSON 文件迁移到 `config/` 目录统一管理
+- **输入框优化** — 公众号分析页 follow-up 输入框加大，支持拖拽调整高度（最大 240px）
+- **测试迁移** — `test_scraper.py` 迁入 `tests/` 包，新增 `tests/test_pdf_export.py`（25 个测试）
+- **样式修复** — 移除所有硬编码颜色，全部使用 CSS 变量驱动
 
 ### 2026-08-09
 

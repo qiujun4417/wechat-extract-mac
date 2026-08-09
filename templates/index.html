@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>微信聊天记录导出</title>
+    <script src="/static/theme.js"></script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -17,6 +18,7 @@
                     <a href="/ai" id="aiBtn" onclick="return goAI()" style="padding:6px 14px;background:#5b6abf;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">🤖 AI 分析</a>
                     <a href="/scraper" style="padding:6px 14px;background:#6b4f2a;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">📰 公众号分析</a>
                     <button onclick="syncMessages()" id="syncBtn" style="padding:6px 14px;background:#2a6a2a;color:#fff;border-radius:6px;font-size:13px;border:none;cursor:pointer;font-weight:500;" title="后台每10秒自动同步，也可点击手动触发">🔄 同步</button>
+                    <button id="themeToggle" onclick="toggleTheme()" style="padding:6px 10px;background:var(--bg-darker);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;" title="切换主题">🌙</button>
                 </div>
             </div>
 

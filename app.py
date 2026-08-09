@@ -3,6 +3,7 @@
 
 import sqlite3
 import os
+import sys
 import hashlib
 import subprocess
 import json
@@ -791,6 +792,138 @@ def api_decrypt_run():
     )
 
 
+# Track source DB modification times for lightweight change detection
+_last_sync_mtimes = {}
+
+# ============================================================
+# Real-time Event Push (SSE long-poll)
+# ============================================================
+
+import threading
+import queue
+
+# Global list of subscriber queues for SSE push
+_event_subscribers = []
+_event_lock = threading.Lock()
+
+
+def _push_event(event_data):
+    """Push an event to all connected SSE subscribers."""
+    with _event_lock:
+        dead = []
+        for q in _event_subscribers:
+            try:
+                q.put_nowait(event_data)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _event_subscribers.remove(q)
+
+
+@app.route("/api/events")
+def api_events():
+    """SSE endpoint for real-time push notifications to the frontend.
+
+    Clients connect once and receive events when:
+    - contacts_updated: contacts list has changed
+    - sync_complete: a sync operation finished (with new_messages count)
+    """
+    def generate():
+        q = queue.Queue(maxsize=50)
+        with _event_lock:
+            _event_subscribers.append(q)
+        try:
+            # Send initial heartbeat
+            yield f"data: {json.dumps({'type': 'connected'})}\n\n"
+            while True:
+                try:
+                    # Block for up to 30s, then send heartbeat
+                    event = q.get(timeout=30)
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except queue.Empty:
+                    # Send heartbeat comment to keep connection alive
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _event_lock:
+                if q in _event_subscribers:
+                    _event_subscribers.remove(q)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@app.route("/api/decrypt/sync/auto")
+def api_decrypt_sync_auto():
+    """Lightweight auto-sync: only re-decrypt if source DB files have changed.
+
+    Compares modification times of source WeChat DB files against last sync.
+    If no changes detected, returns immediately (idempotent / no-op).
+    This is safe to call every 10 seconds without duplicating data.
+    """
+    import decrypt_core
+    global _last_sync_mtimes
+
+    # Check if we have keys
+    passphrase_hex = decrypt_core.load_passphrase()
+    has_keys = os.path.exists(KEYS_FILE)
+    if not passphrase_hex and not has_keys:
+        def noop():
+            yield f"data: {json.dumps({'type': 'done', 'message': 'no_keys'})}\n\n"
+        return Response(stream_with_context(noop()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Detect DB directory
+    db_dir = decrypt_core.auto_detect_db_dir()
+    if not db_dir:
+        def noop():
+            yield f"data: {json.dumps({'type': 'done', 'message': 'no_db_dir'})}\n\n"
+        return Response(stream_with_context(noop()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Check file modification times - only sync if something changed
+    current_mtimes = {}
+    changed = False
+    try:
+        for root, dirs, files in os.walk(db_dir):
+            for f in files:
+                if f.endswith(".db") or f.endswith(".db-wal"):
+                    fpath = os.path.join(root, f)
+                    try:
+                        mtime = os.path.getmtime(fpath)
+                        current_mtimes[fpath] = mtime
+                        if fpath not in _last_sync_mtimes or _last_sync_mtimes[fpath] != mtime:
+                            changed = True
+                    except OSError:
+                        continue
+    except Exception:
+        pass
+
+    if not changed and _last_sync_mtimes:
+        # No changes - return immediately (idempotent no-op)
+        def noop():
+            yield f"data: {json.dumps({'type': 'done', 'message': 'no_changes'})}\n\n"
+        return Response(stream_with_context(noop()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Changes detected - update mtimes and proceed with sync
+    _last_sync_mtimes = current_mtimes
+
+    # Delegate to the full sync logic (same SSE streaming)
+    return api_decrypt_sync()
+
+
 @app.route("/api/decrypt/sync")
 def api_decrypt_sync():
     """Re-decrypt databases to pick up new messages (incremental sync).
@@ -910,6 +1043,9 @@ def api_decrypt_sync():
         _table_index_cache = None
         _stats_cache = None
         MESSAGE_DBS, BIZ_MESSAGE_DBS = _discover_message_dbs()
+
+        # Push real-time event to all connected clients
+        _push_event({"type": "sync_complete", "new_messages": success})
 
         yield f"data: {json.dumps({'type': 'done', 'message': f'✅ 同步完成！成功 {success} 个数据库', 'success': success, 'failed': failed})}\n\n"
 
@@ -1741,6 +1877,513 @@ def api_ai_upload():
             return jsonify({"error": f"Upload failed: {resp.status_code}"}), resp.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ===== Article Scraper Feature =====
+
+SCRAPE_DIR = os.path.join(PROJECT_DIR, "scraped_articles")
+_scrape_jobs = {}  # {job_id: {status, ...}}
+
+# Scraper session persistence (similar to AI sessions)
+SCRAPER_SESSIONS_FILE = os.path.join(PROJECT_DIR, "scraper_sessions.json")
+_scraper_sessions = {}
+
+
+def _load_scraper_sessions():
+    """Load scraper sessions from disk."""
+    global _scraper_sessions
+    if os.path.exists(SCRAPER_SESSIONS_FILE):
+        try:
+            with open(SCRAPER_SESSIONS_FILE, "r", encoding="utf-8") as f:
+                _scraper_sessions = json.load(f)
+        except Exception:
+            _scraper_sessions = {}
+
+
+def _save_scraper_sessions():
+    """Save scraper sessions to disk."""
+    try:
+        with open(SCRAPER_SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_scraper_sessions, f, ensure_ascii=False, indent=2)
+        os.chmod(SCRAPER_SESSIONS_FILE, 0o600)
+    except Exception:
+        pass
+
+
+_load_scraper_sessions()
+
+
+def extract_article_urls_for_contact(username):
+    """Extract all article URLs from an official account's messages.
+
+    Returns: [{title, url, timestamp, time_str}]
+    """
+    tables = find_message_table(username)
+    if not tables:
+        return []
+
+    import re
+    urls_seen = set()
+    articles = []
+
+    # Regex patterns (same as used in get_messages())
+    mmreader_re = re.compile(
+        r'<(?:item|newitem)>.*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>'
+        r'.*?<url>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</url>.*?</(?:item|newitem)>',
+        re.DOTALL
+    )
+    title_re = re.compile(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>")
+    url_re = re.compile(r"<url>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</url>")
+
+    for db_path, table_name in tables:
+        try:
+            conn = get_db(db_path)
+            cursor = conn.execute(
+                f"SELECT local_type, create_time, message_content, "
+                f"WCDB_CT_message_content FROM [{table_name}] "
+                f"ORDER BY create_time ASC"
+            )
+            for row in cursor:
+                local_type = row["local_type"]
+                base_type = get_base_msg_type(local_type)
+                ct_type = row["WCDB_CT_message_content"] or 0
+                content = decode_message_content(row["message_content"], ct_type)
+                create_time = row["create_time"] or 0
+
+                if not content:
+                    continue
+
+                found_urls = []
+
+                # Type 49 (link/appmsg) or type 1 with mmreader content
+                if base_type == 49 or (base_type == 1 and "<mmreader>" in str(content)):
+                    # Try mmreader (multi-article) first
+                    if "<mmreader>" in str(content):
+                        for title, url in mmreader_re.findall(str(content)):
+                            if url and url.startswith("http"):
+                                found_urls.append((title.strip(), url.strip()))
+                    else:
+                        # Standard single appmsg
+                        title_match = title_re.search(str(content))
+                        url_match = url_re.search(str(content))
+                        if title_match and url_match:
+                            title = title_match.group(1).strip()
+                            url = url_match.group(1).strip()
+                            if url.startswith("http"):
+                                found_urls.append((title, url))
+
+                for title, url in found_urls:
+                    # Deduplicate by full URL (WeChat articles differ only in query params)
+                    if url in urls_seen:
+                        continue
+                    urls_seen.add(url)
+                    articles.append({
+                        "title": title,
+                        "url": url,
+                        "timestamp": create_time,
+                        "time_str": datetime.fromtimestamp(create_time).strftime(
+                            "%Y-%m-%d %H:%M"
+                        ) if create_time else "",
+                    })
+
+            conn.close()
+        except Exception:
+            continue
+
+    # Sort by timestamp (newest first)
+    articles.sort(key=lambda a: a["timestamp"], reverse=True)
+    return articles
+
+
+@app.route("/scraper")
+def scraper_page():
+    """Render the article scraper page."""
+    status = check_setup_status()
+    if status["step"] != 99:
+        return render_template("setup.html", status=status)
+    return render_template("scraper.html")
+
+
+@app.route("/api/articles/urls/<path:username>")
+def api_article_urls(username):
+    """Extract all article URLs from an official account's messages."""
+    articles = extract_article_urls_for_contact(username)
+    return jsonify(articles)
+
+
+@app.route("/api/articles/urls/batch", methods=["POST"])
+def api_article_urls_batch():
+    """Extract URLs from multiple official accounts at once."""
+    data = request.get_json()
+    usernames = data.get("usernames", [])
+    if not usernames:
+        return jsonify({"error": "No usernames provided"}), 400
+
+    result = {}
+    for username in usernames:
+        result[username] = extract_article_urls_for_contact(username)
+    return jsonify(result)
+
+
+@app.route("/api/articles/scrape/start", methods=["POST"])
+def api_articles_scrape_start():
+    """Submit a scrape job. Returns job_id."""
+    import uuid
+
+    data = request.get_json()
+    articles = data.get("articles", [])
+    prompt = data.get("prompt", "")
+
+    if not articles:
+        return jsonify({"error": "No articles provided"}), 400
+
+    job_id = str(uuid.uuid4())[:8]
+    os.makedirs(SCRAPE_DIR, exist_ok=True)
+
+    # Save job to disk
+    job_data = {
+        "articles": articles,
+        "prompt": prompt,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+    }
+    job_file = os.path.join(SCRAPE_DIR, f"{job_id}.json")
+    with open(job_file, "w", encoding="utf-8") as f:
+        json.dump(job_data, f, ensure_ascii=False, indent=2)
+
+    _scrape_jobs[job_id] = {"status": "pending"}
+    return jsonify({"job_id": job_id, "article_count": len(articles)})
+
+
+@app.route("/api/articles/scrape")
+def api_articles_scrape():
+    """SSE endpoint: run scraper subprocess and stream progress."""
+    job_id = request.args.get("job_id")
+    if not job_id:
+        def err():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Missing job_id'})}\n\n"
+        return Response(stream_with_context(err()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    job_file = os.path.join(SCRAPE_DIR, f"{job_id}.json")
+    if not os.path.exists(job_file):
+        def err():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Job not found'})}\n\n"
+        return Response(stream_with_context(err()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    def generate():
+        # Find the Python interpreter (same one running this app)
+        python_bin = sys.executable
+        scraper_script = os.path.join(PROJECT_DIR, "scraper.py")
+
+        yield f"data: {json.dumps({'type': 'info', 'message': '启动爬虫...'})}\n\n"
+
+        try:
+            proc = subprocess.Popen(
+                [python_bin, scraper_script, "scrape", "--job", job_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=PROJECT_DIR,
+            )
+
+            # Read stdout line by line and forward as SSE
+            for line in iter(proc.stdout.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except json.JSONDecodeError:
+                    # Non-JSON output, wrap it
+                    yield f"data: {json.dumps({'type': 'info', 'message': line})}\n\n"
+
+            proc.wait()
+
+            if proc.returncode != 0:
+                stderr = proc.stderr.read()
+                yield f"data: {json.dumps({'type': 'error', 'message': f'爬虫进程异常退出: {stderr[:200]}'})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'启动爬虫失败: {str(e)}'})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.route("/api/articles/analyze", methods=["POST"])
+def api_articles_analyze():
+    """Stream AI analysis of scraped articles via SSE."""
+    import requests as req_lib
+
+    data = request.get_json()
+    job_id = data.get("job_id")
+    prompt = data.get("prompt", "")
+
+    # Default prompt
+    if not prompt:
+        prompt = (
+            "给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，"
+            "然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 "
+            "JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。"
+        )
+
+    # Load scraped articles
+    if job_id:
+        job_file = os.path.join(SCRAPE_DIR, f"{job_id}.json")
+        if not os.path.exists(job_file):
+            def err():
+                yield f"data: {json.dumps({'error': 'Job not found'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            return Response(stream_with_context(err()),
+                            mimetype="text/event-stream; charset=utf-8",
+                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        with open(job_file, "r", encoding="utf-8") as f:
+            job = json.load(f)
+
+        results = job.get("results", [])
+        successful = [r for r in results if r.get("success")]
+    else:
+        # Direct articles content passed in body
+        successful = data.get("articles", [])
+
+    if not successful:
+        def err():
+            yield f"data: {json.dumps({'error': '没有成功爬取的文章可供分析'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        return Response(stream_with_context(err()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    config = load_ai_config()
+    if not config.get("api_key"):
+        def err():
+            yield f"data: {json.dumps({'error': 'API Key not configured'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        return Response(stream_with_context(err()),
+                        mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Build AI messages
+    # Sort articles by timestamp
+    successful.sort(key=lambda a: a.get("timestamp", 0))
+
+    article_text_parts = []
+    for i, article in enumerate(successful, 1):
+        time_str = article.get("time_str", "")
+        title = article.get("title", "Untitled")
+        content = article.get("content", "")
+        # Truncate very long articles to avoid context overflow
+        if len(content) > 3000:
+            content = content[:3000] + "\n... (内容已截断)"
+        article_text_parts.append(
+            f"--- 文章 {i}: {title} ({time_str}) ---\n{content}"
+        )
+
+    articles_context = "\n\n".join(article_text_parts)
+
+    # Support follow-up conversation: if messages array provided, use it
+    conversation_messages = data.get("messages", [])
+    if conversation_messages:
+        # Multi-turn: system context + full conversation history
+        api_messages = [
+            {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
+            {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+        ]
+        for msg in conversation_messages:
+            role = msg.get("role", "user")
+            if role == "assistant":
+                api_messages.append({"role": "assistant", "content": msg.get("content", "")})
+            else:
+                api_messages.append({"role": "user", "content": msg.get("content", "")})
+    else:
+        # Single-turn: first analysis
+        api_messages = [
+            {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
+            {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+            {"role": "user", "content": prompt},
+        ]
+
+    print(f"\n{'='*60}")
+    print(f"[Article Analysis] {len(successful)} articles, prompt: {prompt[:80]}...")
+    print(f"  Context size: {len(articles_context)} chars")
+    print(f"{'='*60}")
+
+    def generate():
+        max_retries = 3
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                api_url = f"{config['api_base']}/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {config['api_key']}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": config["model"],
+                    "messages": api_messages,
+                    "stream": True,
+                }
+
+                resp = req_lib.post(api_url, json=payload, headers=headers,
+                                    stream=True, timeout=180)
+
+                if resp.status_code != 200:
+                    error_msg = f"API returned status {resp.status_code}"
+                    try:
+                        error_body = resp.json()
+                        if "error" in error_body:
+                            error_msg = error_body["error"].get("message", error_msg)
+                    except Exception:
+                        pass
+
+                    is_retryable = (
+                        resp.status_code in (429, 503) or
+                        "overload" in error_msg.lower() or
+                        "rate" in error_msg.lower()
+                    )
+                    if is_retryable and attempt < max_retries - 1:
+                        wait = retry_delay * (attempt + 1)
+                        yield f"data: {json.dumps({'content': f'⏳ 服务繁忙，{wait}秒后重试...'}, ensure_ascii=False)}\n\n"
+                        time.sleep(wait)
+                        continue
+
+                    yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    return
+
+                # Stream response
+                for raw_line in resp.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="replace")
+                    if line.startswith("data: "):
+                        payload_str = line[6:]
+                        if payload_str.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(payload_str)
+                            choices = chunk.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                reasoning = delta.get("reasoning_content")
+                                if content:
+                                    yield f"data: {json.dumps({'content': content}, ensure_ascii=False)}\n\n"
+                                elif reasoning:
+                                    yield f"data: {json.dumps({'thinking': reasoning}, ensure_ascii=False)}\n\n"
+                        except json.JSONDecodeError:
+                            continue
+
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+
+            except req_lib.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    wait = retry_delay * (attempt + 1)
+                    yield f"data: {json.dumps({'content': f'⏳ 超时，{wait}秒后重试...'}, ensure_ascii=False)}\n\n"
+                    time.sleep(wait)
+                    continue
+                yield f"data: {json.dumps({'error': 'Request timed out'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+# ============================================================
+# Scraper Session API
+# ============================================================
+
+@app.route("/api/scraper/sessions", methods=["GET"])
+def api_scraper_sessions():
+    """List all scraper sessions, sorted by last updated."""
+    sessions = []
+    for sid, data in _scraper_sessions.items():
+        sessions.append({
+            "id": sid,
+            "title": data.get("title", "未命名"),
+            "message_count": len(data.get("messages", [])),
+            "updated": data.get("updated", 0),
+        })
+    sessions.sort(key=lambda s: s["updated"], reverse=True)
+    return jsonify(sessions)
+
+
+@app.route("/api/scraper/sessions", methods=["POST"])
+def api_scraper_session_create():
+    """Create a new scraper session."""
+    import uuid
+    sid = str(uuid.uuid4())[:8]
+    data = request.get_json() or {}
+    _scraper_sessions[sid] = {
+        "messages": data.get("messages", []),
+        "generated_html": data.get("generated_html", ""),
+        "job_id": data.get("job_id"),
+        "title": data.get("title", "未命名"),
+        "scrape_summary": data.get("scrape_summary", False),
+        "updated": time.time(),
+    }
+    _save_scraper_sessions()
+    return jsonify({"id": sid})
+
+
+@app.route("/api/scraper/sessions/<sid>", methods=["GET"])
+def api_scraper_session_get(sid):
+    """Get a scraper session's full state."""
+    session = _scraper_sessions.get(sid)
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+    return jsonify({"id": sid, **session})
+
+
+@app.route("/api/scraper/sessions/<sid>", methods=["PUT"])
+def api_scraper_session_update(sid):
+    """Update a scraper session."""
+    session = _scraper_sessions.get(sid)
+    if not session:
+        # Create it
+        session = {}
+        _scraper_sessions[sid] = session
+    data = request.get_json() or {}
+    if "messages" in data:
+        session["messages"] = data["messages"]
+    if "generated_html" in data:
+        session["generated_html"] = data["generated_html"]
+    if "job_id" in data:
+        session["job_id"] = data["job_id"]
+    if "title" in data:
+        session["title"] = data["title"]
+    if "scrape_summary" in data:
+        session["scrape_summary"] = data["scrape_summary"]
+    session["updated"] = time.time()
+    _save_scraper_sessions()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/scraper/sessions/<sid>", methods=["DELETE"])
+def api_scraper_session_delete(sid):
+    """Delete a scraper session."""
+    if sid in _scraper_sessions:
+        del _scraper_sessions[sid]
+        _save_scraper_sessions()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

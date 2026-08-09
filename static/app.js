@@ -11,6 +11,8 @@
     let currentFilter = 'all';
     let searchQuery = '';
     let activeContact = null;
+    let officialCollapsed = localStorage.getItem('official_collapsed') !== 'false'; // collapsed by default
+    let chatsCollapsed = localStorage.getItem('chats_collapsed') === 'true'; // expanded by default
 
     // DOM Elements
     const contactsList = document.getElementById('contactsList');
@@ -53,6 +55,14 @@
                 renderContacts();
             });
         });
+
+        // Listen for sync-triggered refreshes (from index.html auto-sync)
+        window.addEventListener('contacts-refreshed', () => {
+            loadContacts(true);
+        });
+
+        // Connect to real-time event stream for instant updates
+        connectEventStream();
     }
 
     // ===== Data Loading =====
@@ -64,7 +74,7 @@
             contacts = await response.json();
             renderContacts();
         } catch (err) {
-            contactsList.innerHTML = '<div class="loading" style="color:#f38ba8">Failed to load contacts</div>';
+            contactsList.innerHTML = '<div class="loading" style="color:#f38ba8">加载联系人失败</div>';
             console.error('Failed to load contacts:', err);
         }
     }
@@ -72,38 +82,108 @@
     // ===== Rendering =====
 
     function getVisibleContacts() {
-        let filtered = contacts;
+        // Separate officials from chats
+        let officials = contacts.filter(c => c.is_official);
+        let chats = contacts.filter(c => !c.is_official);
 
-        // Apply type filter
+        // Apply type filter to chats only
         if (currentFilter === 'contacts') {
-            filtered = filtered.filter(c => !c.is_group);
+            chats = chats.filter(c => !c.is_group);
         } else if (currentFilter === 'groups') {
-            filtered = filtered.filter(c => c.is_group);
+            chats = chats.filter(c => c.is_group);
         }
 
-        // Apply search
+        // Apply search to both
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
-            filtered = filtered.filter(c =>
+            const matchFn = c =>
                 (c.display_name && c.display_name.toLowerCase().includes(q)) ||
                 (c.nick_name && c.nick_name.toLowerCase().includes(q)) ||
                 (c.remark && c.remark.toLowerCase().includes(q)) ||
-                (c.username && c.username.toLowerCase().includes(q))
-            );
+                (c.username && c.username.toLowerCase().includes(q));
+            chats = chats.filter(matchFn);
+            officials = officials.filter(matchFn);
         }
 
-        return filtered;
+        return { chats, officials };
     }
 
     function renderContacts() {
-        const visible = getVisibleContacts();
+        const { chats, officials } = getVisibleContacts();
 
-        if (visible.length === 0) {
-            contactsList.innerHTML = '<div class="loading" style="animation:none">No contacts found</div>';
+        if (chats.length === 0 && officials.length === 0) {
+            contactsList.innerHTML = '<div class="loading" style="animation:none">未找到联系人</div>';
             return;
         }
 
-        const html = visible.map(contact => {
+        let html = '';
+
+        // Chats section (collapsible)
+        if (chats.length > 0) {
+            html += `
+                <div class="contact-group-section ${chatsCollapsed ? 'collapsed' : ''}">
+                    <div class="contact-group-header" data-group="chats">
+                        <span class="group-toggle">▼</span>
+                        <span class="group-title">💬 聊天</span>
+                        <span class="group-count">${chats.length}</span>
+                    </div>
+                    <div class="contact-group-items">
+                        ${renderContactItems(chats)}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Official accounts section (collapsible)
+        if (officials.length > 0) {
+            html += `
+                <div class="contact-group-section ${officialCollapsed ? 'collapsed' : ''}">
+                    <div class="contact-group-header" data-group="officials">
+                        <span class="group-toggle">▼</span>
+                        <span class="group-title">📰 公众号</span>
+                        <span class="group-count">${officials.length}</span>
+                    </div>
+                    <div class="contact-group-items">
+                        ${renderContactItems(officials)}
+                    </div>
+                </div>
+            `;
+        }
+
+        contactsList.innerHTML = html;
+
+        // Bind group header click for collapse/expand
+        contactsList.querySelectorAll('.contact-group-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                const group = header.dataset.group;
+                const section = header.closest('.contact-group-section');
+                if (group === 'officials') {
+                    officialCollapsed = !officialCollapsed;
+                    localStorage.setItem('official_collapsed', officialCollapsed);
+                    section.classList.toggle('collapsed', officialCollapsed);
+                } else if (group === 'chats') {
+                    chatsCollapsed = !chatsCollapsed;
+                    localStorage.setItem('chats_collapsed', chatsCollapsed);
+                    section.classList.toggle('collapsed', chatsCollapsed);
+                }
+            });
+        });
+
+        // Bind contact item click events
+        contactsList.querySelectorAll('.contact-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const username = item.dataset.username;
+                if (e.target.closest('[data-action="toggle"]')) {
+                    toggleSelection(username);
+                } else {
+                    previewChat(username);
+                }
+            });
+        });
+    }
+
+    function renderContactItems(contactList) {
+        return contactList.map(contact => {
             const isSelected = selectedUsernames.has(contact.username);
             const isActive = activeContact === contact.username;
             const initial = (contact.display_name || '?')[0].toUpperCase();
@@ -122,9 +202,9 @@
                     <div class="contact-details">
                         <div class="contact-name">${escapeHtml(contact.display_name)}</div>
                         <div class="contact-meta">
-                            ${contact.is_group ? '<span class="contact-badge group">Group</span>' : ''}
+                            ${contact.is_group ? '<span class="contact-badge group">群聊</span>' : ''}
                             ${contact.is_official ? '<span class="contact-badge official">公众号</span>' : ''}
-                            <span>${contact.message_count} msgs</span>
+                            <span>${contact.message_count} 条</span>
                             <span>${contact.last_active}</span>
                         </div>
                     </div>
@@ -132,20 +212,6 @@
                 </div>
             `;
         }).join('');
-
-        contactsList.innerHTML = html;
-
-        // Bind click events
-        contactsList.querySelectorAll('.contact-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                const username = item.dataset.username;
-                if (e.target.closest('[data-action="toggle"]')) {
-                    toggleSelection(username);
-                } else {
-                    previewChat(username);
-                }
-            });
-        });
     }
 
     // ===== Chat Preview =====
@@ -165,7 +231,7 @@
         const contact = contacts.find(c => c.username === username);
         if (!contact) return;
 
-        chatPanel.innerHTML = '<div class="loading">Loading messages...</div>';
+        chatPanel.innerHTML = '<div class="loading">加载消息中...</div>';
 
         try {
             const response = await fetch(`/api/messages/${encodeURIComponent(username)}?limit=${MESSAGES_PER_PAGE}&offset=0`);
@@ -184,16 +250,16 @@
                     </div>
                     <div class="chat-info">
                         <h2>${escapeHtml(contact.display_name)}</h2>
-                        <span class="chat-meta">${contact.message_count} messages &middot; Last active: ${contact.last_active}</span>
+                        <span class="chat-meta">${contact.message_count} 条消息 · 最近活跃: ${contact.last_active}</span>
                     </div>
                     <a href="/ai?contact=${encodeURIComponent(username)}" class="ai-analyze-btn" title="AI 分析此对话">🤖 AI 分析</a>
                 </div>
                 <div class="messages-container" id="messagesContainer">
-                    ${hasMoreMessages ? '<div class="load-more-trigger" id="loadMoreTrigger">⬆ 上拉加载更多</div>' : ''}
+                    ${hasMoreMessages ? '<div class="load-more-trigger" id="loadMoreTrigger">⬆ 上滑加载更多</div>' : ''}
             `;
 
             if (messages.length === 0) {
-                html += '<div class="no-messages">No messages found</div>';
+                html += '<div class="no-messages">暂无消息</div>';
             } else {
                 html += renderMessages(messages);
             }
@@ -209,7 +275,7 @@
                 container.addEventListener('scroll', handleScrollUp);
             }
         } catch (err) {
-            chatPanel.innerHTML = '<div class="empty-state"><h2>Failed to load messages</h2></div>';
+            chatPanel.innerHTML = '<div class="empty-state"><h2>加载消息失败</h2></div>';
             console.error('Failed to load messages:', err);
         }
     }
@@ -312,18 +378,25 @@
     }
 
     function selectAllVisible() {
-        const visible = getVisibleContacts();
-        visible.forEach(c => selectedUsernames.add(c.username));
+        const { chats, officials } = getVisibleContacts();
+        // Select all chats (if expanded), and officials (if expanded)
+        if (!chatsCollapsed) {
+            chats.forEach(c => selectedUsernames.add(c.username));
+        }
+        if (!officialCollapsed) {
+            officials.forEach(c => selectedUsernames.add(c.username));
+        }
+        const count = (chatsCollapsed ? 0 : chats.length) + (officialCollapsed ? 0 : officials.length);
         updateSelectionUI();
         renderContacts();
-        showToast(`Selected ${visible.length} contacts`);
+        showToast(`已选择 ${count} 个联系人`);
     }
 
     function deselectAll() {
         selectedUsernames.clear();
         updateSelectionUI();
         renderContacts();
-        showToast('Selection cleared');
+        showToast('已取消全部选择');
     }
 
     function updateSelectionUI() {
@@ -335,13 +408,13 @@
 
     async function handleExport() {
         if (selectedUsernames.size === 0) {
-            showToast('No contacts selected');
+            showToast('请先选择联系人');
             return;
         }
 
         const format = exportFormat.value;
         exportBtn.disabled = true;
-        exportBtn.textContent = 'Exporting...';
+        exportBtn.textContent = '导出中...';
 
         try {
             const response = await fetch('/api/export', {
@@ -355,7 +428,7 @@
 
             if (!response.ok) {
                 const err = await response.json();
-                throw new Error(err.error || 'Export failed');
+                throw new Error(err.error || '导出失败');
             }
 
             // Download the zip file
@@ -369,13 +442,13 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            showToast(`Exported ${selectedUsernames.size} conversations as ${format.toUpperCase()}`);
+            showToast(`已导出 ${selectedUsernames.size} 个对话 (${format.toUpperCase()})`);
         } catch (err) {
-            showToast('Export failed: ' + err.message);
+            showToast('导出失败: ' + err.message);
             console.error('Export failed:', err);
         } finally {
             exportBtn.disabled = selectedUsernames.size === 0;
-            exportBtn.textContent = 'Export';
+            exportBtn.textContent = '导出';
         }
     }
 
@@ -384,6 +457,45 @@
     function handleSearch() {
         searchQuery = searchInput.value.trim();
         renderContacts();
+    }
+
+    // ===== Real-time Event Stream =====
+
+    let eventSource = null;
+    let eventRetryTimer = null;
+
+    function connectEventStream() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        eventSource = new EventSource('/api/events');
+
+        eventSource.onmessage = function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type === 'contacts_updated') {
+                    // Contacts list changed — reload silently
+                    loadContacts(true);
+                } else if (data.type === 'sync_complete') {
+                    // Full sync completed — reload contacts and show notification
+                    loadContacts(true);
+                    if (data.new_messages) {
+                        showToast(`同步完成，新增 ${data.new_messages} 条消息`);
+                    }
+                }
+            } catch (err) {
+                // ignore parse errors
+            }
+        };
+
+        eventSource.onerror = function() {
+            eventSource.close();
+            eventSource = null;
+            // Reconnect after 5 seconds
+            clearTimeout(eventRetryTimer);
+            eventRetryTimer = setTimeout(connectEventStream, 5000);
+        };
     }
 
     // ===== Utilities =====

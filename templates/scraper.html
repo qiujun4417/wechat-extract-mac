@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公众号文章分析</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        :root {
+            --bg: #1e1e2e;
+            --bg-dark: #181825;
+            --surface: #252536;
+            --surface-hover: #2a2a3d;
+            --border: #313244;
+            --text: #cdd6f4;
+            --text-dim: #a6adc8;
+            --text-muted: #6c7086;
+            --accent: #89b4fa;
+            --accent-hover: #74a8fc;
+            --success: #a6e3a1;
+            --warning: #f9e2af;
+            --error: #f38ba8;
+            --radius: 8px;
+            --radius-lg: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-dark);
+            gap: 16px;
+        }
+        .top-bar a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .top-bar a:hover { color: var(--text); }
+        .top-bar h1 { font-size: 18px; font-weight: 600; flex: 1; }
+        .top-bar .session-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .top-bar select {
+            padding: 5px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 12px;
+            max-width: 200px;
+        }
+        .top-bar .btn-sm {
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text-dim);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .top-bar .btn-sm:hover { background: var(--surface); color: var(--text); }
+
+        /* Main Layout */
+        .main-layout {
+            display: flex;
+            height: calc(100vh - 49px);
+        }
+
+        /* Left Panel: Official Accounts */
+        .left-panel {
+            width: 300px;
+            min-width: 300px;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-dark);
+        }
+        .left-panel-header {
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .left-panel-header h2 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        .left-panel-header input {
+            width: 100%;
+            padding: 7px 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 12px;
+            outline: none;
+        }
+        .left-panel-header input:focus { border-color: var(--accent); }
+        .accounts-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px;
+        }
+        .account-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            gap: 8px;
+            transition: background 0.15s;
+        }
+        .account-item:hover { background: var(--surface-hover); }
+        .account-item.selected { background: var(--surface); border: 1px solid var(--accent); }
+        .account-item .checkbox {
+            width: 16px; height: 16px;
+            border-radius: 4px;
+            border: 2px solid var(--text-muted);
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            transition: all 0.15s;
+        }
+        .account-item.selected .checkbox {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .account-item.selected .checkbox::after {
+            content: "✓"; color: #1e1e2e; font-size: 10px; font-weight: 700;
+        }
+        .account-avatar {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            background: var(--border);
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden; flex-shrink: 0;
+        }
+        .account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .account-avatar .initial { color: var(--text); font-size: 13px; font-weight: 600; }
+        .account-info { flex: 1; min-width: 0; }
+        .account-name {
+            font-size: 12px; font-weight: 500; color: var(--text);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .account-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+        .left-panel-footer {
+            padding: 10px 12px;
+            border-top: 1px solid var(--border);
+            display: flex; gap: 8px; align-items: center;
+        }
+        .left-panel-footer .count {
+            font-size: 12px; color: var(--text-dim); flex: 1;
+        }
+        .left-panel-footer .count span { color: var(--accent); font-weight: 600; }
+
+        /* Right Panel: Workflow Timeline */
+        .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .workflow-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+        }
+
+        /* Workflow Sections (all visible as timeline) */
+        .workflow-section {
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+        .section-header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-dark);
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            gap: 10px;
+            user-select: none;
+        }
+        .section-header:hover { background: var(--surface); }
+        .section-header .toggle { transition: transform 0.2s; font-size: 12px; color: var(--text-muted); }
+        .section-header .toggle.collapsed { transform: rotate(-90deg); }
+        .section-header .badge {
+            background: var(--accent);
+            color: #1e1e2e;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 10px;
+        }
+        .section-header h3 { font-size: 14px; font-weight: 600; flex: 1; }
+        .section-header .status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .section-header .status.done { background: rgba(166,227,161,0.15); color: var(--success); }
+        .section-header .status.running { background: rgba(137,180,250,0.15); color: var(--accent); }
+        .section-body {
+            padding: 16px;
+            transition: max-height 0.3s;
+        }
+        .section-body.hidden { display: none; }
+
+        /* Articles Table */
+        .articles-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .articles-table th {
+            text-align: left;
+            padding: 8px 10px;
+            background: var(--bg-dark);
+            color: var(--text-dim);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+        }
+        .articles-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+        }
+        .articles-table tr:hover td { background: var(--surface-hover); }
+        .articles-table .title-cell {
+            max-width: 350px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .articles-table .title-cell a { color: var(--accent); text-decoration: none; }
+        .articles-table .title-cell a:hover { text-decoration: underline; }
+        .article-checkbox {
+            width: 14px; height: 14px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 7px 14px;
+            border-radius: var(--radius);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: none;
+            white-space: nowrap;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #1e1e2e;
+            font-weight: 600;
+        }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { background: var(--surface-hover); }
+
+        /* Progress */
+        .progress-bar {
+            height: 5px;
+            background: var(--surface);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            transition: width 0.3s;
+            width: 0%;
+        }
+        .progress-log {
+            max-height: 160px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            line-height: 1.8;
+            color: var(--text-dim);
+            background: var(--bg-dark);
+            border-radius: var(--radius);
+            padding: 10px;
+            border: 1px solid var(--border);
+        }
+        .progress-log .success { color: var(--success); }
+        .progress-log .failed { color: var(--error); }
+        .progress-log .info { color: var(--text-dim); }
+
+        /* Stats */
+        .scrape-stats {
+            margin-bottom: 10px;
+        }
+        .stats-row {
+            display: flex;
+            gap: 16px;
+            padding: 10px 14px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .stat-item .stat-value { font-size: 18px; font-weight: 700; color: var(--text); }
+        .stat-item .stat-label { font-size: 10px; color: var(--text-muted); }
+        .stat-item.success .stat-value { color: var(--success); }
+        .stat-item.failed .stat-value { color: var(--error); }
+
+        /* Prompt & Input */
+        .prompt-area { margin: 12px 0; }
+        .prompt-area label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-dim);
+            margin-bottom: 6px;
+        }
+        .prompt-area textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 13px;
+            font-family: inherit;
+            resize: vertical;
+            outline: none;
+        }
+        .prompt-area textarea:focus { border-color: var(--accent); }
+
+        /* Follow-up input bar */
+        .followup-bar {
+            padding: 12px 16px;
+            background: var(--bg-dark);
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+        .followup-bar textarea {
+            flex: 1;
+            min-height: 38px;
+            max-height: 120px;
+            padding: 8px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 13px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            line-height: 1.5;
+        }
+        .followup-bar textarea:focus { border-color: var(--accent); }
+        .followup-bar button {
+            padding: 8px 16px;
+            height: 38px;
+        }
+
+        /* AI Streaming */
+        .ai-streaming {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            font-size: 13px;
+            line-height: 1.8;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        .ai-streaming h1, .ai-streaming h2, .ai-streaming h3 {
+            margin: 14px 0 6px; color: var(--text);
+        }
+        .ai-streaming h1 { font-size: 18px; }
+        .ai-streaming h2 { font-size: 15px; }
+        .ai-streaming h3 { font-size: 14px; }
+        .ai-streaming p { margin: 6px 0; }
+        .ai-streaming ul, .ai-streaming ol { margin: 6px 0; padding-left: 18px; }
+        .ai-streaming li { margin: 3px 0; }
+        .ai-streaming code {
+            background: var(--surface);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+        .ai-streaming pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .ai-streaming pre code { background: none; padding: 0; font-size: 11px; line-height: 1.5; }
+        .ai-streaming table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+        .ai-streaming table th, .ai-streaming table td {
+            border: 1px solid var(--border); padding: 5px 8px; text-align: left;
+        }
+        .ai-streaming table th { background: var(--surface); }
+        .ai-streaming blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 10px;
+            margin: 6px 0;
+            color: var(--text-dim);
+        }
+        .ai-streaming a { color: var(--accent); text-decoration: none; }
+        .ai-streaming a:hover { text-decoration: underline; }
+
+        /* Typing animation */
+        .typing-indicator {
+            display: inline-flex; gap: 4px; align-items: center; padding: 4px 0;
+        }
+        .typing-indicator span {
+            width: 5px; height: 5px; background: var(--text-muted); border-radius: 50%;
+            animation: typing 1.2s infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
+            30% { opacity: 1; transform: scale(1); }
+        }
+
+        /* HTML Preview */
+        .html-preview-frame {
+            width: 100%;
+            height: 600px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: #fff;
+        }
+        .preview-toolbar {
+            display: flex;
+            gap: 8px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+
+        /* Actions bar */
+        .actions-bar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .actions-bar .separator { flex: 1; }
+
+        /* Time range tabs */
+        .time-tab {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .time-tab:hover { background: var(--surface-hover); color: var(--text); }
+        .time-tab.active {
+            background: var(--accent);
+            color: #1e1e2e;
+            border-color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* Pagination */
+        .pagination {
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+        .pagination button {
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .pagination button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+        .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pagination button.active {
+            background: var(--accent);
+            color: #1e1e2e;
+            border-color: var(--accent);
+        }
+        .pagination .page-info { font-size: 11px; color: var(--text-muted); }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+        .empty-state h3 { font-size: 15px; color: var(--text-dim); margin-bottom: 6px; }
+        .empty-state p { font-size: 12px; }
+
+        /* Conversation history */
+        .conversation-entry {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+        .conversation-entry .role-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .conversation-entry .role-label.user { color: var(--accent); }
+        .conversation-entry .role-label.ai { color: var(--success); }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <a href="/">← 返回</a>
+        <h1>📰 公众号文章分析</h1>
+        <div class="session-controls">
+            <select id="sessionSelect" onchange="switchSession(this.value)"></select>
+            <button class="btn-sm" onclick="newSession()">➕ 新建</button>
+        </div>
+    </div>
+
+    <div class="main-layout">
+        <!-- Left: Official Accounts -->
+        <div class="left-panel">
+            <div class="left-panel-header">
+                <h2>选择公众号</h2>
+                <input type="text" id="accountSearch" placeholder="搜索公众号...">
+            </div>
+            <div class="accounts-list" id="accountsList">
+                <div class="empty-state">
+                    <div class="icon">⏳</div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+            <div class="left-panel-footer">
+                <div class="count">已选: <span id="selectedCount">0</span></div>
+                <button class="btn btn-primary" id="extractBtn" disabled onclick="extractUrls()">
+                    提取文章链接
+                </button>
+            </div>
+        </div>
+
+        <!-- Right: Workflow Timeline -->
+        <div class="right-panel">
+            <div class="workflow-area" id="workflowArea">
+                <!-- Welcome state (shown when no session active) -->
+                <div id="welcomeState">
+                    <div class="empty-state">
+                        <div class="icon">📰</div>
+                        <h3>公众号文章分析</h3>
+                        <p>从左侧选择公众号 → 提取文章 → 爬取内容 → AI 可视化分析<br>支持多轮对话调整分析结果</p>
+                    </div>
+                </div>
+
+                <!-- Section 1: Articles & Scraping (shown after extraction) -->
+                <div class="workflow-section" id="sectionScrape" style="display:none;">
+                    <div class="section-header" onclick="toggleSection('scrape')">
+                        <span class="toggle" id="toggleScrape">▼</span>
+                        <span class="badge">1</span>
+                        <h3>文章爬取</h3>
+                        <span class="status" id="scrapeStatus"></span>
+                    </div>
+                    <div class="section-body" id="bodyScrape">
+                        <!-- Article list controls -->
+                        <div class="actions-bar">
+                            <button class="btn btn-secondary" onclick="selectAllArticles()">全选当页</button>
+                            <button class="btn btn-secondary" onclick="selectAllFiltered()">全选筛选</button>
+                            <button class="btn btn-secondary" onclick="deselectAllArticles()">取消全选</button>
+                            <span class="separator"></span>
+                            <span style="font-size:11px;color:var(--text-muted)" id="articleStats"></span>
+                        </div>
+                        <!-- Time grouping tabs -->
+                        <div class="time-tabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">
+                            <span style="font-size:11px;color:var(--text-muted);margin-right:4px;">时间筛选：</span>
+                            <button class="time-tab active" data-range="all" onclick="setTimeRange('all')">全部</button>
+                            <button class="time-tab" data-range="week" onclick="setTimeRange('week')">本周</button>
+                            <button class="time-tab" data-range="month" onclick="setTimeRange('month')">本月</button>
+                            <button class="time-tab" data-range="year" onclick="setTimeRange('year')">今年</button>
+                        </div>
+                        <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);">
+                            <table class="articles-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:26px"><input type="checkbox" class="article-checkbox" id="selectAllCb" onchange="toggleAllArticles(this.checked)"></th>
+                                        <th>标题</th>
+                                        <th style="width:100px">时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="articlesBody"></tbody>
+                            </table>
+                        </div>
+                        <!-- Pagination -->
+                        <div class="pagination" id="pagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;">
+                        </div>
+
+                        <div class="prompt-area">
+                            <label>AI 分析提示词（可自定义）：</label>
+                            <textarea id="promptInput">给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。</textarea>
+                        </div>
+
+                        <div class="actions-bar">
+                            <button class="btn btn-primary" id="scrapeBtn" onclick="startScraping()">
+                                🚀 开始爬取并分析
+                            </button>
+                            <span style="font-size:11px;color:var(--text-muted)" id="selectedArticleCount"></span>
+                        </div>
+
+                        <!-- Scraping progress -->
+                        <div id="scrapeProgressArea" style="display:none;">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="scrapeFill"></div>
+                            </div>
+                            <div class="scrape-stats" id="scrapeStats">
+                                <div class="stats-row">
+                                    <div class="stat-item"><span class="stat-value" id="statTotal">0</span><span class="stat-label">总计</span></div>
+                                    <div class="stat-item success"><span class="stat-value" id="statSuccess">0</span><span class="stat-label">成功</span></div>
+                                    <div class="stat-item failed"><span class="stat-value" id="statFailed">0</span><span class="stat-label">失败</span></div>
+                                    <div class="stat-item"><span class="stat-value" id="statWords">0</span><span class="stat-label">总字数</span></div>
+                                </div>
+                            </div>
+                            <div class="progress-log" id="scrapeLog"></div>
+
+                            <!-- Detailed results table -->
+                            <div id="scrapeResultsDetail" style="display:none;margin-top:12px;">
+                                <details>
+                                    <summary style="cursor:pointer;font-size:12px;color:var(--text-dim);margin-bottom:6px;">📊 爬取详情（点击展开）</summary>
+                                    <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);">
+                                        <table class="articles-table">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width:26px">#</th>
+                                                    <th>标题</th>
+                                                    <th style="width:60px">状态</th>
+                                                    <th style="width:60px">字数</th>
+                                                    <th>原因</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="scrapeResultsBody"></tbody>
+                                        </table>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: AI Analysis (shown during/after analysis) -->
+                <div class="workflow-section" id="sectionAnalysis" style="display:none;">
+                    <div class="section-header" onclick="toggleSection('analysis')">
+                        <span class="toggle" id="toggleAnalysis">▼</span>
+                        <span class="badge">2</span>
+                        <h3>AI 分析过程</h3>
+                        <span class="status" id="analysisStatus"></span>
+                    </div>
+                    <div class="section-body" id="bodyAnalysis">
+                        <!-- Thinking -->
+                        <div id="aiThinking" style="display:none;margin-bottom:10px;">
+                            <details open style="font-size:11px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 10px;background:var(--bg-dark);">
+                                <summary style="cursor:pointer;user-select:none;">💭 思考中... <span id="thinkingChars" style="opacity:0.5"></span></summary>
+                                <div id="thinkingContent" style="margin-top:4px;white-space:pre-wrap;opacity:0.7;max-height:120px;overflow-y:auto;font-size:11px;line-height:1.5;"></div>
+                            </details>
+                        </div>
+                        <!-- Streaming content -->
+                        <div class="ai-streaming" id="aiStreaming" style="display:none;"></div>
+
+                        <!-- Conversation history (follow-up messages) -->
+                        <div id="conversationHistory"></div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Result HTML Preview -->
+                <div class="workflow-section" id="sectionResult" style="display:none;">
+                    <div class="section-header" onclick="toggleSection('result')">
+                        <span class="toggle" id="toggleResult">▼</span>
+                        <span class="badge">3</span>
+                        <h3>分析结果</h3>
+                        <span class="status done" id="resultStatus"></span>
+                    </div>
+                    <div class="section-body" id="bodyResult">
+                        <div class="preview-toolbar">
+                            <button class="btn btn-secondary" onclick="copyHtml()">📋 复制 HTML</button>
+                            <button class="btn btn-secondary" onclick="downloadHtml()">💾 下载 HTML</button>
+                            <button class="btn btn-secondary" onclick="downloadPdf()">📄 下载 PDF</button>
+                            <button class="btn btn-primary" onclick="openInNewTab()">🔗 新窗口打开</button>
+                        </div>
+                        <iframe id="previewFrame" class="html-preview-frame"
+                                sandbox="allow-scripts allow-same-origin"
+                                referrerpolicy="no-referrer"></iframe>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Follow-up input bar (always visible at bottom when session active) -->
+            <div class="followup-bar" id="followupBar" style="display:none;">
+                <textarea id="followupInput" placeholder="对分析结果不满意？输入调整意见继续分析..." rows="1"
+                          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFollowup();}"></textarea>
+                <button class="btn btn-primary" onclick="sendFollowup()" id="followupBtn">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // State
+        let accounts = [];
+        let selectedAccounts = new Set();
+        let extractedArticles = [];
+        let selectedArticleIndices = new Set();
+        let currentJobId = null;
+        let generatedHtml = '';
+        let currentSessionId = localStorage.getItem('scraper_session_id') || null;
+        let sessions = [];
+        let conversationMessages = []; // [{role, content}] for follow-up
+
+        // Pagination & filtering state
+        let currentTimeRange = 'all'; // 'all', 'week', 'month', 'year'
+        let currentPage = 1;
+        const PAGE_SIZE = 50;
+
+        // ===== Init =====
+        loadAccounts();
+        loadSessions();
+        document.getElementById('accountSearch').addEventListener('input', debounce(renderAccounts, 200));
+
+        // Auto-resize followup textarea
+        document.getElementById('followupInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        // ===== Session Management =====
+        async function loadSessions() {
+            try {
+                const resp = await fetch('/api/scraper/sessions');
+                sessions = await resp.json();
+                renderSessionList();
+                if (currentSessionId) {
+                    await restoreSession(currentSessionId);
+                }
+            } catch(e) { sessions = []; }
+        }
+
+        function renderSessionList() {
+            const sel = document.getElementById('sessionSelect');
+            sel.innerHTML = '<option value="">选择历史分析...</option>';
+            sessions.forEach(s => {
+                const selected = s.id === currentSessionId ? 'selected' : '';
+                const date = new Date(s.updated * 1000).toLocaleString('zh-CN', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                sel.innerHTML += `<option value="${s.id}" ${selected}>${esc(s.title || '未命名')} (${date})</option>`;
+            });
+        }
+
+        window.switchSession = async function(sid) {
+            if (!sid) return;
+            currentSessionId = sid;
+            localStorage.setItem('scraper_session_id', sid);
+            await restoreSession(sid);
+        };
+
+        window.newSession = function() {
+            currentSessionId = null;
+            localStorage.removeItem('scraper_session_id');
+            conversationMessages = [];
+            generatedHtml = '';
+            currentJobId = null;
+            // Reset UI
+            document.getElementById('welcomeState').style.display = '';
+            document.getElementById('sectionScrape').style.display = 'none';
+            document.getElementById('sectionAnalysis').style.display = 'none';
+            document.getElementById('sectionResult').style.display = 'none';
+            document.getElementById('followupBar').style.display = 'none';
+            document.getElementById('conversationHistory').innerHTML = '';
+            renderSessionList();
+        };
+
+        async function restoreSession(sid) {
+            try {
+                const resp = await fetch(`/api/scraper/sessions/${sid}`);
+                if (!resp.ok) {
+                    currentSessionId = null;
+                    localStorage.removeItem('scraper_session_id');
+                    return;
+                }
+                const session = await resp.json();
+                conversationMessages = session.messages || [];
+                generatedHtml = session.generated_html || '';
+                currentJobId = session.job_id || null;
+
+                // Restore UI
+                document.getElementById('welcomeState').style.display = 'none';
+
+                // Show scrape section with summary
+                if (session.scrape_summary) {
+                    document.getElementById('sectionScrape').style.display = '';
+                    document.getElementById('scrapeStatus').textContent = '✅ 完成';
+                    document.getElementById('scrapeStatus').className = 'status done';
+                    // Collapse scrape section
+                    document.getElementById('bodyScrape').classList.add('hidden');
+                    document.getElementById('toggleScrape').classList.add('collapsed');
+                }
+
+                // Show analysis section with conversation
+                if (conversationMessages.length > 0) {
+                    document.getElementById('sectionAnalysis').style.display = '';
+                    document.getElementById('analysisStatus').textContent = '✅ 完成';
+                    document.getElementById('analysisStatus').className = 'status done';
+                    renderConversationHistory();
+                }
+
+                // Show result
+                if (generatedHtml) {
+                    document.getElementById('sectionResult').style.display = '';
+                    document.getElementById('previewFrame').srcdoc = generatedHtml;
+                    document.getElementById('resultStatus').textContent = 'HTML';
+                }
+
+                // Show follow-up bar
+                document.getElementById('followupBar').style.display = 'flex';
+
+            } catch(e) {
+                console.error('Failed to restore session:', e);
+            }
+        }
+
+        async function saveSession(title) {
+            const payload = {
+                messages: conversationMessages,
+                generated_html: generatedHtml,
+                job_id: currentJobId,
+                title: title || '公众号分析',
+                scrape_summary: currentJobId ? true : false,
+            };
+
+            if (currentSessionId) {
+                await fetch(`/api/scraper/sessions/${currentSessionId}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                const resp = await fetch('/api/scraper/sessions', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                currentSessionId = data.id;
+                localStorage.setItem('scraper_session_id', currentSessionId);
+            }
+            // Refresh session list
+            const listResp = await fetch('/api/scraper/sessions');
+            sessions = await listResp.json();
+            renderSessionList();
+        }
+
+        function renderConversationHistory() {
+            const container = document.getElementById('conversationHistory');
+            container.innerHTML = '';
+            for (const msg of conversationMessages) {
+                const entry = document.createElement('div');
+                entry.className = 'conversation-entry';
+                const label = msg.role === 'user' ? '👤 用户' : '🤖 AI';
+                const labelCls = msg.role === 'user' ? 'user' : 'ai';
+                let contentHtml;
+                if (msg.role === 'user') {
+                    contentHtml = `<p style="font-size:13px;">${esc(msg.content)}</p>`;
+                } else {
+                    try {
+                        contentHtml = `<div class="ai-streaming" style="display:block;max-height:300px;">${marked.parse(msg.content)}</div>`;
+                    } catch(e) {
+                        contentHtml = `<div class="ai-streaming" style="display:block;max-height:300px;">${msg.content.replace(/\n/g, '<br>')}</div>`;
+                    }
+                }
+                entry.innerHTML = `<div class="role-label ${labelCls}">${label}</div>${contentHtml}`;
+                container.appendChild(entry);
+            }
+        }
+
+        // ===== Load Official Accounts =====
+        async function loadAccounts() {
+            try {
+                const resp = await fetch('/api/contacts');
+                const contacts = await resp.json();
+                accounts = contacts.filter(c => c.is_official);
+                renderAccounts();
+            } catch (e) {
+                document.getElementById('accountsList').innerHTML =
+                    '<div class="empty-state"><p style="color:var(--error)">加载失败</p></div>';
+            }
+        }
+
+        function renderAccounts() {
+            const query = document.getElementById('accountSearch').value.trim().toLowerCase();
+            let filtered = accounts;
+            if (query) {
+                filtered = accounts.filter(a =>
+                    (a.display_name || '').toLowerCase().includes(query) ||
+                    (a.nick_name || '').toLowerCase().includes(query) ||
+                    (a.username || '').toLowerCase().includes(query)
+                );
+            }
+            if (filtered.length === 0) {
+                document.getElementById('accountsList').innerHTML =
+                    '<div class="empty-state"><p>没有找到公众号</p></div>';
+                return;
+            }
+            const html = filtered.map(a => {
+                const selected = selectedAccounts.has(a.username);
+                const initial = (a.display_name || '?')[0];
+                return `
+                    <div class="account-item ${selected ? 'selected' : ''}" data-username="${esc(a.username)}">
+                        <div class="checkbox"></div>
+                        <div class="account-avatar">
+                            ${a.avatar
+                                ? `<img src="${esc(a.avatar)}" onerror="this.parentElement.innerHTML='<span class=initial>${initial}</span>'">`
+                                : `<span class="initial">${initial}</span>`
+                            }
+                        </div>
+                        <div class="account-info">
+                            <div class="account-name">${esc(a.display_name)}</div>
+                            <div class="account-meta">${a.message_count} 条 · ${a.last_active}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('accountsList').innerHTML = html;
+            document.querySelectorAll('.account-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const username = item.dataset.username;
+                    if (selectedAccounts.has(username)) selectedAccounts.delete(username);
+                    else selectedAccounts.add(username);
+                    updateAccountSelection();
+                    renderAccounts();
+                });
+            });
+        }
+
+        function updateAccountSelection() {
+            document.getElementById('selectedCount').textContent = selectedAccounts.size;
+            document.getElementById('extractBtn').disabled = selectedAccounts.size === 0;
+        }
+
+        // ===== Extract URLs =====
+        window.extractUrls = async function() {
+            const btn = document.getElementById('extractBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 提取中...';
+
+            try {
+                const resp = await fetch('/api/articles/urls/batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({usernames: Array.from(selectedAccounts)})
+                });
+                const data = await resp.json();
+
+                extractedArticles = [];
+                for (const [username, articles] of Object.entries(data)) {
+                    const account = accounts.find(a => a.username === username);
+                    const accountName = account ? account.display_name : username;
+                    for (const article of articles) {
+                        extractedArticles.push({...article, username, accountName});
+                    }
+                }
+                extractedArticles.sort((a, b) => b.timestamp - a.timestamp);
+                selectedArticleIndices = new Set(); // 默认不全选
+
+                // Show section 1
+                document.getElementById('welcomeState').style.display = 'none';
+                document.getElementById('sectionScrape').style.display = '';
+                renderArticleList();
+            } catch (e) {
+                alert('提取失败: ' + e.message);
+            } finally {
+                btn.disabled = selectedAccounts.size === 0;
+                btn.textContent = '提取文章链接';
+            }
+        };
+
+        function getFilteredArticles() {
+            if (currentTimeRange === 'all') return extractedArticles;
+            const now = Date.now() / 1000;
+            let cutoff;
+            if (currentTimeRange === 'week') cutoff = now - 7 * 86400;
+            else if (currentTimeRange === 'month') cutoff = now - 30 * 86400;
+            else if (currentTimeRange === 'year') cutoff = now - 365 * 86400;
+            else return extractedArticles;
+            return extractedArticles.filter(a => a.timestamp >= cutoff);
+        }
+
+        function getPagedArticles() {
+            const filtered = getFilteredArticles();
+            const start = (currentPage - 1) * PAGE_SIZE;
+            return filtered.slice(start, start + PAGE_SIZE);
+        }
+
+        function getTotalPages() {
+            return Math.max(1, Math.ceil(getFilteredArticles().length / PAGE_SIZE));
+        }
+
+        function renderArticleList() {
+            const tbody = document.getElementById('articlesBody');
+            const filtered = getFilteredArticles();
+            const totalPages = getTotalPages();
+            if (currentPage > totalPages) currentPage = totalPages;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">该时间段内无文章</td></tr>';
+                document.getElementById('pagination').innerHTML = '';
+                updateArticleStats();
+                return;
+            }
+
+            const paged = getPagedArticles();
+            tbody.innerHTML = paged.map(a => {
+                // Use the original index in extractedArticles for selection tracking
+                const i = extractedArticles.indexOf(a);
+                return `
+                <tr>
+                    <td><input type="checkbox" class="article-checkbox" data-index="${i}" ${selectedArticleIndices.has(i) ? 'checked' : ''} onchange="toggleArticle(${i}, this.checked)"></td>
+                    <td class="title-cell" title="${esc(a.title)}">
+                        <a href="${esc(a.url)}" target="_blank">${esc(a.title || '(无标题)')}</a>
+                        <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${esc(a.accountName || '')}</span>
+                    </td>
+                    <td style="color:var(--text-muted);font-size:11px">${esc(a.time_str)}</td>
+                </tr>
+            `}).join('');
+
+            // Render pagination
+            renderPagination(totalPages);
+            updateArticleStats();
+        }
+
+        function renderPagination(totalPages) {
+            const container = document.getElementById('pagination');
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            let html = '';
+            html += `<button ${currentPage <= 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})">‹</button>`;
+
+            // Show page numbers with ellipsis
+            const pages = [];
+            if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+            } else {
+                pages.push(1);
+                if (currentPage > 3) pages.push('...');
+                for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+                    pages.push(i);
+                }
+                if (currentPage < totalPages - 2) pages.push('...');
+                pages.push(totalPages);
+            }
+
+            for (const p of pages) {
+                if (p === '...') {
+                    html += `<span style="color:var(--text-muted)">…</span>`;
+                } else {
+                    html += `<button class="${p === currentPage ? 'active' : ''}" onclick="goToPage(${p})">${p}</button>`;
+                }
+            }
+
+            html += `<button ${currentPage >= totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})">›</button>`;
+            html += `<span class="page-info">${getFilteredArticles().length} 篇</span>`;
+            container.innerHTML = html;
+        }
+
+        window.goToPage = function(page) {
+            currentPage = page;
+            renderArticleList();
+        };
+
+        window.setTimeRange = function(range) {
+            currentTimeRange = range;
+            currentPage = 1;
+            // Update tab active state
+            document.querySelectorAll('.time-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.range === range);
+            });
+            renderArticleList();
+        };
+
+        function updateArticleStats() {
+            const filtered = getFilteredArticles();
+            document.getElementById('articleStats').textContent =
+                currentTimeRange === 'all'
+                    ? `共 ${extractedArticles.length} 篇`
+                    : `筛选 ${filtered.length} / ${extractedArticles.length} 篇`;
+            document.getElementById('selectedArticleCount').textContent = `已选 ${selectedArticleIndices.size} 篇`;
+            // selectAll checkbox reflects current page
+            const paged = getPagedArticles();
+            const allPageSelected = paged.length > 0 && paged.every(a => selectedArticleIndices.has(extractedArticles.indexOf(a)));
+            document.getElementById('selectAllCb').checked = allPageSelected;
+        }
+
+        window.toggleArticle = function(index, checked) {
+            if (checked) selectedArticleIndices.add(index);
+            else selectedArticleIndices.delete(index);
+            updateArticleStats();
+        };
+        window.toggleAllArticles = function(checked) {
+            // Toggle current page only
+            const paged = getPagedArticles();
+            paged.forEach(a => {
+                const i = extractedArticles.indexOf(a);
+                if (checked) selectedArticleIndices.add(i);
+                else selectedArticleIndices.delete(i);
+            });
+            renderArticleList();
+        };
+        window.selectAllArticles = function() {
+            // Select all on current page
+            const paged = getPagedArticles();
+            paged.forEach(a => {
+                selectedArticleIndices.add(extractedArticles.indexOf(a));
+            });
+            renderArticleList();
+        };
+        window.selectAllFiltered = function() {
+            // Select all in current time filter
+            const filtered = getFilteredArticles();
+            filtered.forEach(a => {
+                selectedArticleIndices.add(extractedArticles.indexOf(a));
+            });
+            renderArticleList();
+        };
+        window.deselectAllArticles = function() {
+            selectedArticleIndices.clear();
+            renderArticleList();
+        };
+
+        // ===== Section Toggle =====
+        window.toggleSection = function(name) {
+            const body = document.getElementById('body' + name.charAt(0).toUpperCase() + name.slice(1));
+            const toggle = document.getElementById('toggle' + name.charAt(0).toUpperCase() + name.slice(1));
+            // Map names
+            const bodyEl = {scrape:'bodyScrape', analysis:'bodyAnalysis', result:'bodyResult'}[name];
+            const toggleEl = {scrape:'toggleScrape', analysis:'toggleAnalysis', result:'toggleResult'}[name];
+            const b = document.getElementById(bodyEl);
+            const t = document.getElementById(toggleEl);
+            b.classList.toggle('hidden');
+            t.classList.toggle('collapsed');
+        };
+
+        // ===== Scraping =====
+        window.startScraping = async function() {
+            if (selectedArticleIndices.size === 0) {
+                alert('请至少选择一篇文章');
+                return;
+            }
+
+            const articles = Array.from(selectedArticleIndices).map(i => extractedArticles[i]);
+            const prompt = document.getElementById('promptInput').value.trim();
+
+            try {
+                const resp = await fetch('/api/articles/scrape/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({articles, prompt})
+                });
+                const data = await resp.json();
+                currentJobId = data.job_id;
+            } catch (e) {
+                alert('启动爬取失败: ' + e.message);
+                return;
+            }
+
+            // Show progress area
+            document.getElementById('scrapeProgressArea').style.display = '';
+            document.getElementById('scrapeBtn').disabled = true;
+            document.getElementById('scrapeStatus').textContent = '爬取中...';
+            document.getElementById('scrapeStatus').className = 'status running';
+
+            const fill = document.getElementById('scrapeFill');
+            const log = document.getElementById('scrapeLog');
+            log.innerHTML = '';
+            fill.style.width = '0%';
+
+            let scrapeResults = [];
+            let successCount = 0, failCount = 0, totalWords = 0;
+
+            const es = new EventSource(`/api/articles/scrape?job_id=${currentJobId}`);
+            es.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+
+                if (data.progress !== undefined) {
+                    fill.style.width = data.progress + '%';
+                }
+
+                if (data.type === 'progress') {
+                    // Only show final results (success/failed), skip intermediate "scraping" status
+                    if (data.status === 'scraping') {
+                        // Just update progress bar, don't log
+                        return;
+                    }
+                    const cls = data.status === 'success' ? 'success' : data.status === 'failed' ? 'failed' : 'info';
+                    const icon = data.status === 'success' ? '✅' : data.status === 'failed' ? '❌' : '⏳';
+                    appendLog(log, `${icon} [${data.index+1}/${data.total}] ${data.title}` +
+                        (data.error ? ` — ${data.error}` : '') +
+                        (data.word_count ? ` (${data.word_count}字)` : ''), cls);
+
+                    if (data.status === 'success') { successCount++; totalWords += data.word_count || 0; }
+                    else if (data.status === 'failed') { failCount++; }
+
+                    document.getElementById('statTotal').textContent = data.total;
+                    document.getElementById('statSuccess').textContent = successCount;
+                    document.getElementById('statFailed').textContent = failCount;
+                    document.getElementById('statWords').textContent = totalWords > 10000 ? (totalWords/1000).toFixed(0) + 'k' : totalWords;
+
+                    if (data.status === 'success' || data.status === 'failed') {
+                        scrapeResults.push({
+                            index: data.index,
+                            title: data.title,
+                            status: data.status,
+                            wordCount: data.word_count || 0,
+                            error: data.error || '',
+                        });
+                    }
+                } else if (data.type === 'info') {
+                    appendLog(log, data.message, 'info');
+                } else if (data.type === 'done') {
+                    fill.style.width = '100%';
+                    appendLog(log, `\n${data.message}`, 'success');
+                    es.close();
+
+                    document.getElementById('scrapeStatus').textContent = '✅ 完成';
+                    document.getElementById('scrapeStatus').className = 'status done';
+                    document.getElementById('scrapeBtn').disabled = false;
+                    renderScrapeDetails(scrapeResults);
+
+                    // Auto-start AI analysis
+                    setTimeout(() => startAIAnalysis(), 500);
+                } else if (data.type === 'error') {
+                    appendLog(log, `❌ ${data.message}`, 'failed');
+                    es.close();
+                    document.getElementById('scrapeBtn').disabled = false;
+                }
+            };
+            es.onerror = function() { es.close(); appendLog(log, '连接断开', 'failed'); document.getElementById('scrapeBtn').disabled = false; };
+        };
+
+        function renderScrapeDetails(results) {
+            if (results.length === 0) return;
+            const tbody = document.getElementById('scrapeResultsBody');
+            tbody.innerHTML = results.map(r => `
+                <tr>
+                    <td style="color:var(--text-muted)">${r.index + 1}</td>
+                    <td class="title-cell">${esc(r.title || '(无标题)')}</td>
+                    <td><span style="color:${r.status === 'success' ? 'var(--success)' : 'var(--error)'};">${r.status === 'success' ? '✅' : '❌'}</span></td>
+                    <td style="color:var(--text-muted)">${r.status === 'success' ? r.wordCount : '-'}</td>
+                    <td style="color:var(--error);font-size:11px;">${esc(r.error)}</td>
+                </tr>
+            `).join('');
+            document.getElementById('scrapeResultsDetail').style.display = '';
+        }
+
+        // ===== AI Analysis =====
+        async function startAIAnalysis(userPrompt) {
+            // Disable follow-up input while AI is working
+            document.getElementById('followupBtn').disabled = true;
+            document.getElementById('followupInput').disabled = true;
+
+            // Show analysis section
+            document.getElementById('sectionAnalysis').style.display = '';
+            document.getElementById('analysisStatus').textContent = '分析中...';
+            document.getElementById('analysisStatus').className = 'status running';
+
+            const streaming = document.getElementById('aiStreaming');
+            const thinking = document.getElementById('aiThinking');
+            const thinkingContent = document.getElementById('thinkingContent');
+            const thinkingChars = document.getElementById('thinkingChars');
+
+            streaming.style.display = 'block';
+            streaming.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            thinking.style.display = 'none';
+            thinkingContent.textContent = '';
+
+            // Show follow-up bar
+            document.getElementById('followupBar').style.display = 'flex';
+
+            const prompt = userPrompt || document.getElementById('promptInput').value.trim();
+            let fullContent = '';
+            let thinkingText = '';
+            let contentStarted = false;
+
+            // Determine if this is initial analysis or follow-up
+            const isFollowup = conversationMessages.length > 0;
+            let requestBody;
+
+            if (isFollowup) {
+                // Follow-up: send conversation history
+                requestBody = {
+                    job_id: currentJobId,
+                    prompt: prompt,
+                    messages: conversationMessages,
+                };
+            } else {
+                requestBody = {
+                    job_id: currentJobId,
+                    prompt: prompt,
+                };
+            }
+
+            // Add user message to conversation
+            conversationMessages.push({role: 'user', content: prompt});
+
+            try {
+                const resp = await fetch('/api/articles/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(requestBody)
+                });
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, {stream: true});
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const payload = line.slice(6);
+                        if (payload === '[DONE]') continue;
+                        try {
+                            const data = JSON.parse(payload);
+
+                            if (data.thinking) {
+                                thinkingText += data.thinking;
+                                thinking.style.display = 'block';
+                                thinkingContent.textContent = thinkingText;
+                                thinkingChars.textContent = `${thinkingText.length} chars`;
+                                thinkingContent.scrollTop = thinkingContent.scrollHeight;
+                                if (!contentStarted) {
+                                    streaming.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+                                }
+                            }
+
+                            if (data.content) {
+                                contentStarted = true;
+                                fullContent += data.content;
+                                renderStreamingContent(streaming, fullContent);
+                            }
+
+                            if (data.error) {
+                                streaming.innerHTML = `<div style="color:var(--error);">❌ ${esc(data.error)}</div>`;
+                            }
+
+                            if (data.done) {
+                                finalizeAnalysis(fullContent);
+                            }
+                        } catch (e) {}
+                    }
+                }
+
+                // Stream ended
+                if (fullContent) {
+                    finalizeAnalysis(fullContent);
+                }
+
+            } catch (e) {
+                streaming.innerHTML = `<div style="color:var(--error);">❌ 分析失败: ${esc(e.message)}</div>`;
+            }
+
+            document.getElementById('analysisStatus').textContent = '✅ 完成';
+            document.getElementById('analysisStatus').className = 'status done';
+
+            // Re-enable follow-up input
+            document.getElementById('followupBtn').disabled = false;
+            document.getElementById('followupInput').disabled = false;
+        }
+
+        function renderStreamingContent(container, content) {
+            try {
+                if (typeof marked !== 'undefined') {
+                    marked.setOptions({ breaks: true });
+                    container.innerHTML = marked.parse(content);
+                } else {
+                    container.innerHTML = content.replace(/\n/g, '<br>');
+                }
+            } catch (e) {
+                container.innerHTML = content.replace(/\n/g, '<br>');
+            }
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function finalizeAnalysis(fullContent) {
+            // Add AI response to conversation
+            conversationMessages.push({role: 'assistant', content: fullContent});
+
+            // Check for HTML
+            const html = extractFullHtml(fullContent);
+            if (html) {
+                generatedHtml = html;
+                // Show result section
+                document.getElementById('sectionResult').style.display = '';
+                document.getElementById('previewFrame').srcdoc = html;
+                document.getElementById('resultStatus').textContent = 'HTML 可视化';
+
+                // Scroll to result
+                setTimeout(() => {
+                    document.getElementById('sectionResult').scrollIntoView({behavior: 'smooth'});
+                }, 300);
+            }
+
+            // Save session
+            const title = extractedArticles.length > 0
+                ? `${extractedArticles[0].accountName || '公众号'}分析 (${extractedArticles.length}篇)`
+                : '公众号分析';
+            saveSession(title);
+        }
+
+        // ===== Follow-up =====
+        window.sendFollowup = async function() {
+            const input = document.getElementById('followupInput');
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            input.value = '';
+            input.style.height = 'auto';
+            document.getElementById('followupBtn').disabled = true;
+
+            // Add to conversation history display
+            renderConversationHistory();
+
+            // Start new AI analysis with follow-up
+            await startAIAnalysis(msg);
+
+            document.getElementById('followupBtn').disabled = false;
+        };
+
+        // ===== HTML Extraction =====
+        function extractFullHtml(content) {
+            if (!content) return null;
+            const fenceMatch = content.match(/```html\s*\n([\s\S]*?)\n```/);
+            if (fenceMatch) {
+                const html = fenceMatch[1].trim();
+                if (html.includes('<!DOCTYPE') || html.includes('<html') || html.includes('<body')) return html;
+            }
+            const docMatch = content.match(/(<!DOCTYPE html[\s\S]*?<\/html>)/i);
+            if (docMatch) return docMatch[1];
+            const htmlMatch = content.match(/(<html[\s\S]*?<\/html>)/i);
+            if (htmlMatch) return '<!DOCTYPE html>\n' + htmlMatch[1];
+            return null;
+        }
+
+        // ===== Preview Actions =====
+        window.copyHtml = function() {
+            if (generatedHtml) {
+                navigator.clipboard.writeText(generatedHtml);
+                showToast('已复制到剪贴板');
+            }
+        };
+        window.downloadHtml = function() {
+            if (!generatedHtml) return;
+            const blob = new Blob([generatedHtml], {type: 'text/html'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `article_analysis_${Date.now()}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+        window.downloadPdf = function() {
+            if (!generatedHtml) return;
+            // Use html2pdf.js to convert iframe content to PDF
+            const frame = document.getElementById('previewFrame');
+            const frameDoc = frame.contentDocument || frame.contentWindow.document;
+            if (!frameDoc || !frameDoc.body) {
+                showToast('PDF 生成失败：无法访问预览内容');
+                return;
+            }
+            showToast('正在生成 PDF...');
+            const opt = {
+                margin: 10,
+                filename: `article_analysis_${Date.now()}.pdf`,
+                image: { type: 'jpeg', quality: 0.95 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            html2pdf().set(opt).from(frameDoc.body).save().then(() => {
+                showToast('PDF 已下载');
+            }).catch(e => {
+                showToast('PDF 生成失败: ' + e.message);
+            });
+        };
+        window.openInNewTab = function() {
+            if (!generatedHtml) return;
+            const blob = new Blob([generatedHtml], {type: 'text/html'});
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+        };
+
+        // ===== Utilities =====
+        function appendLog(container, msg, cls) {
+            const div = document.createElement('div');
+            div.className = cls || '';
+            div.textContent = msg;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showToast(msg) {
+            // Simple toast
+            let toast = document.getElementById('toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast';
+                toast.style.cssText = 'position:fixed;bottom:60px;right:20px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:13px;color:var(--text);z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);transition:opacity 0.3s;';
+                document.body.appendChild(toast);
+            }
+            toast.textContent = msg;
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+        }
+
+        function esc(str) {
+            if (!str) return '';
+            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        function debounce(fn, delay) {
+            let timer;
+            return function(...args) {
+                clearTimeout(timer);
+                timer = setTimeout(() => fn.apply(this, args), delay);
+            };
+        }
+    })();
+    </script>
+</body>
+</html>

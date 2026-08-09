@@ -2132,7 +2132,17 @@ def api_articles_analyze():
         prompt = (
             "给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，"
             "然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 "
-            "JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。"
+            "JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。\n\n"
+            "【重要】HTML 输出需要同时兼容屏幕浏览和 PDF 导出，请遵守以下规范：\n"
+            "1. 使用深色背景（#1a1a2e 或类似）作为默认主题，但必须包含 @media print 样式块，"
+            "在打印/导出 PDF 时切换为白底黑字\n"
+            "2. 每个图表/卡片/section 添加 CSS: break-inside: avoid; page-break-inside: avoid; "
+            "防止分页时被切割\n"
+            "3. ECharts 图表使用 SVG 渲染器（renderer: 'svg'）而非默认 Canvas，"
+            "这样导出 PDF 时图表是矢量的、清晰可缩放\n"
+            "4. 图表容器设置明确的高度（如 300px-400px），不要用百分比高度\n"
+            "5. 所有文字使用 system-ui 字体栈，确保中文渲染正确\n"
+            "6. 页面整体宽度控制在 800px 以内居中显示，适配 A4 纸张宽度"
         )
 
     # Load scraped articles
@@ -2190,6 +2200,16 @@ def api_articles_analyze():
 
     articles_context = "\n\n".join(article_text_parts)
 
+    # System instructions for HTML generation quality
+    html_system_guidance = (
+        "当输出 HTML 可视化时，请遵守以下技术规范以确保导出 PDF 的质量：\n"
+        "1. ECharts 使用 SVG 渲染器: init(dom, null, {renderer: 'svg'})\n"
+        "2. 每个图表/卡片添加 break-inside: avoid 防止分页切割\n"
+        "3. 包含 @media print 样式块（白底黑字、隐藏交互按钮）\n"
+        "4. 图表容器使用固定高度（300-400px），不用百分比\n"
+        "5. 页面内容宽度控制在 800px 以内，适配 A4"
+    )
+
     # Support follow-up conversation: if messages array provided, use it
     conversation_messages = data.get("messages", [])
     if conversation_messages:
@@ -2197,6 +2217,7 @@ def api_articles_analyze():
         api_messages = [
             {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
             {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+            {"role": "system", "content": html_system_guidance},
         ]
         for msg in conversation_messages:
             role = msg.get("role", "user")
@@ -2209,6 +2230,7 @@ def api_articles_analyze():
         api_messages = [
             {"role": "system", "content": "请始终使用中文进行思考和回答。推理过程也必须使用中文。"},
             {"role": "system", "content": f"以下是用户选择的公众号文章内容（共 {len(successful)} 篇）：\n\n{articles_context}"},
+            {"role": "system", "content": html_system_guidance},
             {"role": "user", "content": prompt},
         ]
 

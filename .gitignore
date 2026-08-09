@@ -1,9 +1,5 @@
-# Sensitive data - NEVER commit
-ai_config.json
-ai_sessions.json
-scraper_sessions.json
-all_keys.json
-contacts_cache.json
+# Sensitive data & runtime config - NEVER commit
+config/
 
 # Decrypted databases
 decrypted/

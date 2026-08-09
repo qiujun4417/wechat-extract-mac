@@ -23,9 +23,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
 # Paths
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(PROJECT_DIR, "config")
+os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_BASE = os.path.join(PROJECT_DIR, "decrypted")
-KEYS_FILE = os.path.join(PROJECT_DIR, "all_keys.json")
-CONTACTS_CACHE_FILE = os.path.join(PROJECT_DIR, "contacts_cache.json")
+KEYS_FILE = os.path.join(CONFIG_DIR, "all_keys.json")
+CONTACTS_CACHE_FILE = os.path.join(CONFIG_DIR, "contacts_cache.json")
 PASSPHRASE_FILE = os.path.expanduser("~/.wcdb-key-tool/wechat-passphrase.json")
 WCDB_TOOL = os.path.join(PROJECT_DIR, "decrypt_core.py")
 WECHAT_DATA_BASE = os.path.expanduser(
@@ -1504,8 +1506,8 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 # ===== AI Chat Feature =====
 
-AI_CONFIG_FILE = os.path.join(PROJECT_DIR, "ai_config.json")
-AI_SESSIONS_FILE = os.path.join(PROJECT_DIR, "ai_sessions.json")
+AI_CONFIG_FILE = os.path.join(CONFIG_DIR, "ai_config.json")
+AI_SESSIONS_FILE = os.path.join(CONFIG_DIR, "ai_sessions.json")
 
 # In-memory session store: {session_id: {messages: [...], contacts: [...], title: str, updated: timestamp}}
 _ai_sessions = {}
@@ -1955,7 +1957,7 @@ SCRAPE_DIR = os.path.join(PROJECT_DIR, "scraped_articles")
 _scrape_jobs = {}  # {job_id: {status, ...}}
 
 # Scraper session persistence (similar to AI sessions)
-SCRAPER_SESSIONS_FILE = os.path.join(PROJECT_DIR, "scraper_sessions.json")
+SCRAPER_SESSIONS_FILE = os.path.join(CONFIG_DIR, "scraper_sessions.json")
 _scraper_sessions = {}
 
 

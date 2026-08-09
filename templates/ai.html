@@ -9,11 +9,17 @@
     <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="/static/theme.js"></script>
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
         :root {
             --bg: #1e1e2e; --surface: #252535; --border: #313244;
             --text: #cdd6f4; --text-dim: #a6adc8; --accent: #5b6abf;
+            --accent-hover: #6b7acf; --sent: #95ec69; --radius: 10px;
+        }
+        [data-theme="light"] {
+            --bg: #f5f5f7; --surface: #e8e8ed; --border: #d1d1d6;
+            --text: #1d1d1f; --text-dim: #48484a; --accent: #5b6abf;
             --accent-hover: #6b7acf; --sent: #95ec69; --radius: 10px;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -71,12 +77,12 @@
         .msg-row.ai .msg-bubble h1 { font-size: 18px; } .msg-row.ai .msg-bubble h2 { font-size: 16px; } .msg-row.ai .msg-bubble h3 { font-size: 14px; }
         .msg-row.ai .msg-bubble ul,.msg-row.ai .msg-bubble ol { padding-left: 20px; margin: 8px 0; }
         .msg-row.ai .msg-bubble li { margin-bottom: 4px; }
-        .msg-row.ai .msg-bubble code { background: #181825; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-        .msg-row.ai .msg-bubble pre { background: #181825; padding: 14px; border-radius: 8px; margin: 12px 0; overflow-x: auto; }
+        .msg-row.ai .msg-bubble code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+        .msg-row.ai .msg-bubble pre { background: var(--bg); padding: 14px; border-radius: 8px; margin: 12px 0; overflow-x: auto; }
         .msg-row.ai .msg-bubble pre code { background: none; padding: 0; }
         .msg-row.ai .msg-bubble table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
         .msg-row.ai .msg-bubble th,.msg-row.ai .msg-bubble td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
-        .msg-row.ai .msg-bubble th { background: #181825; font-weight: 600; }
+        .msg-row.ai .msg-bubble th { background: var(--bg); font-weight: 600; }
         .msg-row.ai .msg-bubble blockquote { border-left: 3px solid var(--accent); padding-left: 12px; margin: 8px 0; color: var(--text-dim); }
         .echart-container { width: 100%; height: 300px; margin: 12px 0; border-radius: 8px; }
         .mermaid-container { margin: 12px 0; }
@@ -324,6 +330,7 @@
             </label>
         </div>
         <button class="config-btn" onclick="openConfig()">⚙️ 设置</button>
+        <button class="config-btn" id="themeToggle" onclick="toggleTheme()" title="切换主题">🌙</button>
     </div>
 
     <!-- Chat Area -->

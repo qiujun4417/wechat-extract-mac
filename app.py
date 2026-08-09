@@ -25,6 +25,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_BASE = os.path.join(PROJECT_DIR, "decrypted")
 KEYS_FILE = os.path.join(PROJECT_DIR, "all_keys.json")
+CONTACTS_CACHE_FILE = os.path.join(PROJECT_DIR, "contacts_cache.json")
 PASSPHRASE_FILE = os.path.expanduser("~/.wcdb-key-tool/wechat-passphrase.json")
 WCDB_TOOL = os.path.join(PROJECT_DIR, "decrypt_core.py")
 WECHAT_DATA_BASE = os.path.expanduser(
@@ -820,6 +821,40 @@ def _push_event(event_data):
             _event_subscribers.remove(q)
 
 
+def _rebuild_contacts_cache():
+    """Rebuild the contacts JSON cache file after sync."""
+    try:
+        contacts = get_all_contacts()
+        enriched = []
+        for c in contacts:
+            count = get_message_count(c["username"])
+            if count == 0:
+                continue
+            last_time = get_last_message_time(c["username"])
+            c["message_count"] = count
+            c["last_active"] = (
+                datetime.fromtimestamp(last_time).strftime("%Y-%m-%d")
+                if last_time else ""
+            )
+            c["last_active_ts"] = last_time
+            display_name = c["remark"] or c["nick_name"] or c["username"]
+            c["display_name"] = display_name
+            enriched.append(c)
+        enriched.sort(key=lambda x: x["last_active_ts"], reverse=True)
+
+        cache_data = {
+            "updated_at": int(time.time()),
+            "contacts": enriched
+        }
+        with open(CONTACTS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+        print(f"[Cache] Contacts cache updated: {len(enriched)} contacts")
+        return enriched
+    except Exception as e:
+        print(f"[Cache] Failed to rebuild contacts cache: {e}")
+        return None
+
+
 @app.route("/api/events")
 def api_events():
     """SSE endpoint for real-time push notifications to the frontend.
@@ -1044,8 +1079,12 @@ def api_decrypt_sync():
         _stats_cache = None
         MESSAGE_DBS, BIZ_MESSAGE_DBS = _discover_message_dbs()
 
+        # Rebuild contacts cache after sync
+        _rebuild_contacts_cache()
+
         # Push real-time event to all connected clients
         _push_event({"type": "sync_complete", "new_messages": success})
+        _push_event({"type": "contacts_updated"})
 
         yield f"data: {json.dumps({'type': 'done', 'message': f'✅ 同步完成！成功 {success} 个数据库', 'success': success, 'failed': failed})}\n\n"
 
@@ -1054,6 +1093,25 @@ def api_decrypt_sync():
         mimetype="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+@app.route("/api/contacts/cached")
+def api_contacts_cached():
+    """Return contacts from JSON cache for fast page loads."""
+    try:
+        if os.path.exists(CONTACTS_CACHE_FILE):
+            with open(CONTACTS_CACHE_FILE, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+            return jsonify(cache_data)
+    except (json.JSONDecodeError, IOError, KeyError) as e:
+        print(f"[Cache] Cache file corrupted or unreadable, falling through to DB: {e}")
+
+    # Cache miss or error — fall through to full query and build cache
+    enriched = _rebuild_contacts_cache()
+    if enriched is not None:
+        return jsonify({"updated_at": int(time.time()), "contacts": enriched})
+    # If rebuild also failed, return empty
+    return jsonify({"updated_at": 0, "contacts": []})
 
 
 @app.route("/api/contacts")
@@ -1085,6 +1143,18 @@ def api_contacts():
         enriched.append(c)
     # Sort by last active time (most recent first)
     enriched.sort(key=lambda x: x["last_active_ts"], reverse=True)
+
+    # Update the JSON cache file
+    try:
+        cache_data = {
+            "updated_at": int(time.time()),
+            "contacts": enriched
+        }
+        with open(CONTACTS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[Cache] Failed to write contacts cache: {e}")
+
     return jsonify(enriched)
 
 

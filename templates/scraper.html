@@ -6,6 +6,7 @@
     <title>公众号文章分析</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <!-- html2pdf.js removed: using browser native print-to-PDF for much better quality -->
+    <script src="/static/theme.js"></script>
     <style>
         /* Dark theme (default) */
         :root, [data-theme="dark"] {
@@ -781,27 +782,6 @@
     </div>
 
     <script>
-    // Theme toggle (outside IIFE so onclick can access it)
-    function toggleTheme() {
-        const html = document.documentElement;
-        const current = html.getAttribute('data-theme') || 'dark';
-        const next = current === 'dark' ? 'light' : 'dark';
-        html.setAttribute('data-theme', next);
-        localStorage.setItem('scraper_theme', next);
-        document.getElementById('themeToggle').textContent = next === 'dark' ? '🌙' : '☀️';
-    }
-    // Apply saved theme on load (respect OS preference if no saved choice)
-    (function() {
-        const saved = localStorage.getItem('scraper_theme');
-        const theme = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-        document.documentElement.setAttribute('data-theme', theme);
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('themeToggle').textContent = theme === 'dark' ? '🌙' : '☀️';
-        });
-    })();
-    </script>
-
-    <script>
     (function() {
         'use strict';
 
@@ -983,8 +963,17 @@
         // ===== Load Official Accounts =====
         async function loadAccounts() {
             try {
-                const resp = await fetch('/api/contacts');
-                const contacts = await resp.json();
+                // Try cache first for instant render
+                let contacts;
+                const cacheResp = await fetch('/api/contacts/cached');
+                if (cacheResp.ok) {
+                    const cached = await cacheResp.json();
+                    contacts = cached.contacts || cached;
+                } else {
+                    // Fall back to full query
+                    const resp = await fetch('/api/contacts');
+                    contacts = await resp.json();
+                }
                 accounts = contacts.filter(c => c.is_official);
                 renderAccounts();
             } catch (e) {
@@ -1692,7 +1681,7 @@ body.print-mode section {
     margin-bottom: 20px;
 }
 </style>
-<script>
+<scr` + `ipt>
 // Add print-mode class for light theme rendering
 document.addEventListener('DOMContentLoaded', function() {
     document.body.classList.add('print-mode');
@@ -1710,7 +1699,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }, 800);
 });
-</script>`;
+</scr` + `ipt>`;
 
             // Inject before </head> or before </body>
             if (html.includes('</head>')) {

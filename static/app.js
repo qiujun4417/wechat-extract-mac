@@ -69,7 +69,18 @@
 
     async function loadContacts(refresh) {
         try {
-            const url = refresh ? '/api/contacts?refresh=1' : '/api/contacts';
+            if (!refresh) {
+                // Try cache first for instant render
+                const cacheResp = await fetch('/api/contacts/cached');
+                if (cacheResp.ok) {
+                    const cached = await cacheResp.json();
+                    contacts = cached.contacts || cached;
+                    renderContacts();
+                    return;
+                }
+            }
+            // Full load (used on refresh or cache miss)
+            const url = '/api/contacts?refresh=1';
             const response = await fetch(url);
             contacts = await response.json();
             renderContacts();

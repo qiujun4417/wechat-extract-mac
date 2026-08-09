@@ -3,6 +3,7 @@ ai_config.json
 ai_sessions.json
 scraper_sessions.json
 all_keys.json
+contacts_cache.json
 
 # Decrypted databases
 decrypted/

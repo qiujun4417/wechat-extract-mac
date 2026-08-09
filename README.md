@@ -11,7 +11,7 @@
 | 📜 无限滚动 | 往上拉自动加载历史消息，跨数据库分片 |
 | 🔄 增量同步 | 一键拉取最新消息（含 WAL 解密支持） |
 | 📦 批量导出 | 支持 HTML / TXT / CSV 格式 |
-| 🤖 AI 分析 | 集成 Kimi K3，支持多模态、思考模式、Session 持久化 |
+| 🤖 AI 分析 | 集成 OpenRouter 400+ 模型，支持多模态、思考模式、Session 持久化 |
 | 🖼️ 图片展示 | 2025 年及之前的图片可直接显示 |
 | 🔗 链接跳转 | 公众号文章和新闻链接可直接点击 |
 
@@ -20,10 +20,11 @@
 ```
 wechat-extract-mac/
 ├── app.py                 # Flask 主应用 (端口 9527)
+├── ai_router.py           # AI 多模型路由器 (OpenRouter + 直连 Provider)
 ├── decrypt_core.py        # 解密引擎 (从 wcdb-key-tool 集成)
 ├── scraper.py             # 公众号文章爬虫模块
 ├── config/                # 运行时配置与数据 (.gitignore)
-│   ├── ai_config.json     # AI API 配置
+│   ├── ai_config.json     # AI API 配置 (多 Provider)
 │   ├── ai_sessions.json   # AI 对话会话持久化
 │   ├── all_keys.json      # 数据库解密密钥缓存
 │   ├── contacts_cache.json# 联系人/公众号列表缓存
@@ -31,6 +32,7 @@ wechat-extract-mac/
 ├── decrypted/             # 解密后的数据库文件 (.gitignore)
 ├── scraped_articles/      # 爬取的文章内容 (.gitignore)
 ├── tests/                 # 单元测试
+│   ├── test_ai_router.py  # AI 路由器测试 (42 tests)
 │   ├── test_scraper.py    # 爬虫模块测试
 │   └── test_pdf_export.py # PDF 导出功能测试
 ├── templates/
@@ -133,12 +135,19 @@ uv export --no-dev --no-hashes -o requirements.txt
 
 #### 配置
 
-右上角 ⚙️ 按钮设置：
-- **API Base URL**: `https://api.moonshot.cn/v1` (Kimi)
-- **API Key**: 从 https://platform.kimi.com 获取
-- **Model**: `kimi-k3` (默认，支持推理和多模态)
+右上角 ⚙️ 按钮设置，支持两种模式：
 
-也支持 OpenAI / Claude / DeepSeek 等所有 OpenAI 兼容 API。
+**方式一：OpenRouter（推荐）**
+- 注册 [openrouter.ai](https://openrouter.ai) 获取 API Key
+- 一个 Key 即可访问 400+ 模型（GPT-4o、Claude、DeepSeek、Gemini、Llama 等）
+- 点击「发现可用模型」自动填充下拉选择器
+
+**方式二：自定义接口（兜底）**
+- **API Base URL**: `https://api.moonshot.cn/v1` (Kimi) 或其他 OpenAI 兼容接口
+- **API Key**: 对应平台的 API Key
+- **Model**: 手动输入模型名称
+
+支持 OpenAI / Claude / DeepSeek / Kimi / SiliconFlow 等所有 OpenAI 兼容 API。
 
 #### 交互方式
 
@@ -263,6 +272,22 @@ pip3 install -r requirements.txt
 - lldb (随 Xcode Command Line Tools 安装)
 
 ## Changelog
+
+### 2026-08-10 (v3)
+
+- **多模型路由器** — 新增 `ai_router.py` 模块，支持多 Provider 配置和动态模型切换
+  - **OpenRouter 集成** — 一个 API Key 访问 400+ 模型（GPT-4o、Claude、DeepSeek、Gemini 等）
+  - **模型发现** — 调用 `/v1/models` 动态获取可用模型列表，自动填充下拉选择器
+  - **自定义接口兜底** — 无 OpenRouter 时可手动配置 api_base + api_key + model（保留旧方案）
+  - **模型下拉选择器** — Top bar 新增 `<select>` 按 Provider 分组，显示能力标签（🧠 thinking, 👁 vision）
+  - **Per-request 模型选择** — 每次请求可指定不同模型，无需频繁改设置
+  - **统一 SSE 流式处理** — 提取 `stream_chat_sse()` 统一函数，消除两个端点间的重复代码（~200行）
+  - **自动配置迁移** — 旧格式 `{api_base, api_key, model}` 启动时自动迁移为新的多 Provider 格式
+  - **OpenRouter 专用 headers** — 自动添加 `HTTP-Referer` 和 `X-OpenRouter-Title`
+  - **SSRF 防护增强** — 允许列表包含 `openrouter.ai`，且从配置的 Provider 域名动态扩展
+- **设置界面重构** — 双 Tab 布局：「OpenRouter (推荐)」+ 「自定义接口」
+- **新增 API 端点** — `GET /api/ai/models`、`POST /api/ai/models/discover`
+- **新增测试** — `tests/test_ai_router.py`（42 个测试覆盖路由、迁移、SSRF、Provider 管理）
 
 ### 2026-08-09 (v2)
 

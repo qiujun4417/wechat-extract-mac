@@ -1,10 +1,14 @@
 # Sensitive data - NEVER commit
 ai_config.json
 ai_sessions.json
+scraper_sessions.json
 all_keys.json
 
 # Decrypted databases
 decrypted/
+
+# Scraped articles (temporary)
+scraped_articles/
 
 # WeChat passphrase
 .wcdb-key-tool/

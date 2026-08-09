@@ -133,6 +133,63 @@ body {
     font-weight: 600;
 }
 
+/* Contact Group Sections */
+.contact-group-section {
+    margin-bottom: 4px;
+}
+
+.contact-group-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    border-radius: var(--radius);
+    transition: background var(--transition);
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-sidebar);
+}
+
+.contact-group-header:hover {
+    background: var(--bg-darker);
+}
+
+.contact-group-header .group-toggle {
+    font-size: 10px;
+    color: var(--text-secondary);
+    transition: transform 0.2s ease;
+    width: 16px;
+    text-align: center;
+}
+
+.contact-group-section.collapsed .group-toggle {
+    transform: rotate(-90deg);
+}
+
+.contact-group-header .group-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.contact-group-header .group-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-darker);
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: auto;
+}
+
+.contact-group-section.collapsed .contact-group-items {
+    display: none;
+}
+
 /* Contacts List */
 .contacts-list {
     flex: 1;

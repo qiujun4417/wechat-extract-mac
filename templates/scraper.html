@@ -1563,12 +1563,8 @@
         };
         window.downloadPdf = function() {
             if (!generatedHtml) return;
-            // Open a new window with print-optimized HTML and trigger print dialog
-            // This uses the browser's native PDF rendering which produces:
-            // - Selectable/searchable text (vector, not rasterized)
-            // - Proper page breaks (no chart cutting)
-            // - Much smaller file size
-            // - High quality chart rendering via SVG/CSS
+            // Open a new window with the original HTML and trigger print dialog
+            // Uses browser's native PDF rendering — preserves original theme exactly
             const printHtml = injectPrintStyles(generatedHtml);
             const printWin = window.open('', '_blank');
             if (!printWin) {
@@ -1578,7 +1574,7 @@
             printWin.document.write(printHtml);
             printWin.document.close();
             // Wait for charts/scripts to render, then trigger print
-            showToast('正在准备打印预览，请在弹出窗口中选择"保存为 PDF"...');
+            showToast('请在打印对话框中勾选「背景图形」以保留原始样式');
             printWin.onload = function() {
                 setTimeout(() => {
                     printWin.print();
@@ -1593,17 +1589,17 @@
         };
 
         // Inject @media print styles into the generated HTML for optimal PDF output
+        // Preserves original theme (dark/light) — only adds pagination control and background printing
         function injectPrintStyles(html) {
             const printCSS = `
 <style id="pdf-print-optimization">
 /* ===== Print / PDF Export Optimization ===== */
+/* Preserve original colors (dark or light) — print exactly as displayed */
 @media print {
-    /* Force white background for readability and smaller file */
     html, body {
-        background: #ffffff !important;
-        color: #1a1a1a !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
+        color-adjust: exact !important;
     }
 
     /* Ensure charts/sections don't get cut across pages */
@@ -1614,29 +1610,10 @@
         page-break-inside: avoid !important;
     }
 
-    /* Add breathing room between sections for page breaks */
+    /* Keep headings with their content */
     h1, h2, h3, h4 {
         break-after: avoid !important;
         page-break-after: avoid !important;
-    }
-
-    /* Remove unnecessary dark overlays/shadows */
-    * {
-        box-shadow: none !important;
-        text-shadow: none !important;
-    }
-
-    /* Ensure all text is dark and readable */
-    p, span, li, td, th, label, div {
-        color: #1a1a1a !important;
-    }
-    h1, h2, h3, h4, h5, h6 {
-        color: #0d0d0d !important;
-    }
-
-    /* Make charts render with print-friendly backgrounds */
-    [class*="chart"], [class*="echart"] {
-        background: #ffffff !important;
     }
 
     /* Hide interactive-only elements */
@@ -1646,7 +1623,7 @@
 
     /* Proper margins */
     @page {
-        margin: 15mm 12mm;
+        margin: 10mm;
         size: A4;
     }
 
@@ -1656,50 +1633,7 @@
         height: auto !important;
     }
 }
-
-/* Also apply light-theme overrides directly for the print window */
-body.print-mode {
-    background: #ffffff !important;
-    color: #1a1a1a !important;
-}
-body.print-mode * {
-    border-color: #e5e5e5 !important;
-}
-body.print-mode h1, body.print-mode h2, body.print-mode h3 {
-    color: #0d0d0d !important;
-}
-body.print-mode p, body.print-mode span, body.print-mode li,
-body.print-mode td, body.print-mode th, body.print-mode div {
-    color: #1a1a1a !important;
-}
-body.print-mode [class*="chart"], body.print-mode [class*="card"],
-body.print-mode section {
-    background: #ffffff !important;
-    border: 1px solid #e5e5e5 !important;
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 20px;
-}
-</style>
-<scr` + `ipt>
-// Add print-mode class for light theme rendering
-document.addEventListener('DOMContentLoaded', function() {
-    document.body.classList.add('print-mode');
-    // Re-render ECharts instances with light theme if available
-    setTimeout(function() {
-        if (typeof echarts !== 'undefined') {
-            var charts = document.querySelectorAll('[_echarts_instance_]');
-            charts.forEach(function(el) {
-                var chart = echarts.getInstanceByDom(el);
-                if (chart) {
-                    // Force resize to fit print layout
-                    chart.resize();
-                }
-            });
-        }
-    }, 800);
-});
-</scr` + `ipt>`;
+</style>`;
 
             // Inject before </head> or before </body>
             if (html.includes('</head>')) {

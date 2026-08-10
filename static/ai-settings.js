@@ -12,8 +12,9 @@
         .ai-settings-overlay {
             display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;
+            pointer-events: none;
         }
-        .ai-settings-overlay.show { display: flex; }
+        .ai-settings-overlay.show { display: flex; pointer-events: auto; }
         .ai-settings-modal {
             background: var(--surface, #252535); border-radius: 12px; padding: 24px;
             width: 420px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
@@ -116,7 +117,11 @@
 
     const container = document.createElement('div');
     container.innerHTML = modalHTML;
-    document.body.appendChild(container);
+    // Use position:fixed elements — append directly without a wrapper that could
+    // break flex layouts. Extract children and append them individually.
+    while (container.firstChild) {
+        document.body.appendChild(container.firstChild);
+    }
 
     // === Toast ===
     function showAISettingsToast(msg) {

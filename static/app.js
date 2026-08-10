@@ -13,6 +13,8 @@
     let activeContact = null;
     let officialCollapsed = localStorage.getItem('official_collapsed') !== 'false'; // collapsed by default
     let chatsCollapsed = localStorage.getItem('chats_collapsed') === 'true'; // expanded by default
+    let eventSource = null;
+    let eventRetryTimer = null;
 
     // DOM Elements
     const contactsList = document.getElementById('contactsList');
@@ -471,9 +473,6 @@
     }
 
     // ===== Real-time Event Stream =====
-
-    let eventSource = null;
-    let eventRetryTimer = null;
 
     function connectEventStream() {
         if (eventSource) {

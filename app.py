@@ -1506,7 +1506,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 # ===== AI Chat Feature =====
 
-from ai_router import ModelRouter, stream_chat_sse, get_config_for_api, ProviderConfig
+from ai_router import ModelRouter, stream_chat_sse, get_config_for_api, ProviderConfig, AIError, ERROR_MESSAGES, validate_api_host
 
 AI_CONFIG_FILE = os.path.join(CONFIG_DIR, "ai_config.json")
 AI_SESSIONS_FILE = os.path.join(CONFIG_DIR, "ai_sessions.json")
@@ -1549,7 +1549,6 @@ def ai_page():
 @app.route("/api/ai/config", methods=["GET", "POST"])
 def api_ai_config():
     """Get or update AI configuration (multi-provider)."""
-    from ai_router import validate_api_host
 
     if request.method == "GET":
         return jsonify(get_config_for_api(_model_router))
@@ -1579,7 +1578,7 @@ def api_ai_config():
                 new_base = data["api_base"].rstrip("/")
                 error = validate_api_host(new_base, _model_router.config)
                 if error:
-                    return jsonify({"error": error}), 400
+                    return jsonify(error), 400
                 provider.api_base = new_base
             if data.get("api_key") and "****" not in data["api_key"]:
                 provider.api_key = data["api_key"]
@@ -1595,11 +1594,11 @@ def api_ai_config():
         if action == "add_provider":
             provider_data = data.get("provider", {})
             if not provider_data.get("api_base"):
-                return jsonify({"error": "api_base is required"}), 400
+                return jsonify({"error": ERROR_MESSAGES["CONFIG_API_BASE_REQUIRED"], "error_code": "CONFIG_API_BASE_REQUIRED"}), 400
             new_base = provider_data["api_base"].rstrip("/")
             error = validate_api_host(new_base, _model_router.config)
             if error:
-                return jsonify({"error": error}), 400
+                return jsonify(error), 400
             provider_data["api_base"] = new_base
             provider = ProviderConfig.from_dict(provider_data)
             _model_router.add_provider(provider)
@@ -1612,13 +1611,13 @@ def api_ai_config():
                 new_base = updates["api_base"].rstrip("/")
                 error = validate_api_host(new_base, _model_router.config)
                 if error:
-                    return jsonify({"error": error}), 400
+                    return jsonify(error), 400
                 updates["api_base"] = new_base
             if updates.get("api_key") and "****" in updates["api_key"]:
                 del updates["api_key"]  # Don't overwrite with masked value
             if _model_router.update_provider(provider_id, updates):
                 return jsonify({"success": True})
-            return jsonify({"error": "Provider not found"}), 404
+            return jsonify({"error": ERROR_MESSAGES["CONFIG_PROVIDER_NOT_FOUND"], "error_code": "CONFIG_PROVIDER_NOT_FOUND"}), 404
 
         elif action == "remove_provider":
             provider_id = data.get("provider_id")
@@ -1632,7 +1631,7 @@ def api_ai_config():
             return jsonify({"success": True})
 
         else:
-            return jsonify({"error": f"Unknown action: {action}"}), 400
+            return jsonify({"error": ERROR_MESSAGES["CONFIG_ACTION_UNKNOWN"].format(action=action), "error_code": "CONFIG_ACTION_UNKNOWN"}), 400
 
 
 @app.route("/api/ai/models", methods=["GET"])
@@ -1647,10 +1646,10 @@ def api_ai_models_discover():
     data = request.get_json()
     provider_id = data.get("provider_id", "")
     if not provider_id:
-        return jsonify({"error": "provider_id is required"}), 400
+        return jsonify({"error": "请指定服务提供商 ID", "error_code": "PROVIDER_ID_REQUIRED"}), 400
     result = _model_router.discover_models(provider_id)
     if result["error"]:
-        return jsonify({"error": result["error"], "models": []}), 400
+        return jsonify({"error": result["error"], "error_code": result.get("error_code", ""), "models": []}), 400
     return jsonify({"models": result["models"]})
 
 
@@ -1691,7 +1690,7 @@ def api_ai_session_get(sid):
     """Get a session's full state."""
     session = _ai_sessions.get(sid)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        return jsonify({"error": "会话不存在"}), 404
     return jsonify({"id": sid, **session})
 
 
@@ -1700,7 +1699,7 @@ def api_ai_session_update(sid):
     """Update session (save messages, contacts, title)."""
     session = _ai_sessions.get(sid)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        return jsonify({"error": "会话不存在"}), 404
     data = request.get_json() or {}
     if "messages" in data:
         session["messages"] = data["messages"]
@@ -1755,9 +1754,10 @@ def api_ai_chat():
         api_url, headers, payload = _model_router.build_request_params(
             model_id, [], thinking=thinking_param
         )
-    except ValueError as e:
+    except (ValueError, AIError) as e:
         def error_gen():
-            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+            err_data = e.to_dict() if isinstance(e, AIError) else {'error': str(e)}
+            yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
         return Response(stream_with_context(error_gen()), mimetype="text/event-stream; charset=utf-8",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1880,15 +1880,15 @@ def api_ai_upload():
     # Find active provider - must support file upload
     provider = _model_router._get_active_provider()
     if not provider:
-        return jsonify({"error": "No AI provider configured"}), 400
+        return jsonify({"error": "未配置 AI 服务提供商"}), 400
     if not provider.api_key:
-        return jsonify({"error": "API Key not configured"}), 400
+        return jsonify({"error": "未配置 API Key"}), 400
     if not provider.capabilities.get("file_upload"):
-        return jsonify({"error": f"Provider '{provider.name}' does not support file upload. Use a direct Kimi connection."}), 400
+        return jsonify({"error": f"服务提供商「{provider.name}」不支持文件上传，请使用支持文件上传的提供商"}), 400
 
     file = request.files.get("file")
     if not file:
-        return jsonify({"error": "No file provided"}), 400
+        return jsonify({"error": "请选择要上传的文件"}), 400
 
     try:
         resp = req_lib.post(
@@ -1903,9 +1903,9 @@ def api_ai_upload():
             print(f"[AI Upload] File uploaded: {file.filename} -> {result.get('id')}")
             return jsonify(result)
         else:
-            return jsonify({"error": f"Upload failed: {resp.status_code}"}), resp.status_code
+            return jsonify({"error": f"文件上传失败（HTTP {resp.status_code}）"}), resp.status_code
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"文件上传异常：{str(e)}"}), 500
 
 
 # ===== Article Scraper Feature =====
@@ -2046,7 +2046,7 @@ def api_article_urls_batch():
     data = request.get_json()
     usernames = data.get("usernames", [])
     if not usernames:
-        return jsonify({"error": "No usernames provided"}), 400
+        return jsonify({"error": "请指定公众号用户名"}), 400
 
     result = {}
     for username in usernames:
@@ -2064,7 +2064,7 @@ def api_articles_scrape_start():
     prompt = data.get("prompt", "")
 
     if not articles:
-        return jsonify({"error": "No articles provided"}), 400
+        return jsonify({"error": "请提供要爬取的文章列表"}), 400
 
     job_id = str(uuid.uuid4())[:8]
     os.makedirs(SCRAPE_DIR, exist_ok=True)
@@ -2208,9 +2208,10 @@ def api_articles_analyze():
         api_url, headers, payload = _model_router.build_request_params(
             model_id, [], thinking=None
         )
-    except ValueError as e:
+    except (ValueError, AIError) as e:
         def err():
-            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+            err_data = e.to_dict() if isinstance(e, AIError) else {'error': str(e)}
+            yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         return Response(stream_with_context(err()),
                         mimetype="text/event-stream; charset=utf-8",

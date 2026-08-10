@@ -989,6 +989,9 @@
                             otherGroups[key].push(m);
                         }
                     });
+                    // Sort free models by health
+                    const healthOrder = {'ok': 0, 'slow': 1, undefined: 2, 'error': 3};
+                    openrouterFree.sort((a, b) => (healthOrder[a.health] || 2) - (healthOrder[b.health] || 2));
                     function addGroup(label, items) {
                         if (!items.length) return;
                         const optgroup = document.createElement('optgroup');
@@ -996,7 +999,11 @@
                         items.forEach(m => {
                             const opt = document.createElement('option');
                             opt.value = m.id;
-                            opt.textContent = m.name || m.id;
+                            let name = m.name || m.id;
+                            if (m.health === 'ok') name = '✅ ' + name;
+                            else if (m.health === 'slow') name = '⚠️ ' + name;
+                            else if (m.health === 'error') name = '❌ ' + name;
+                            opt.textContent = name;
                             optgroup.appendChild(opt);
                         });
                         sel.appendChild(optgroup);
@@ -1004,7 +1011,8 @@
                     for (const [name, models] of Object.entries(otherGroups)) {
                         addGroup(name, models);
                     }
-                    addGroup(`OpenRouter (免费 · ${openrouterFree.length})`, openrouterFree);
+                    const freeOk = openrouterFree.filter(m => m.health === 'ok' || m.health === 'slow').length;
+                    addGroup(`OpenRouter (免费 · ${freeOk}/${openrouterFree.length} 可用)`, openrouterFree);
                     addGroup(`OpenRouter (付费 · ${openrouterPaid.length})`, openrouterPaid);
                     // Restore last selection
                     const saved = localStorage.getItem('ai_active_model');

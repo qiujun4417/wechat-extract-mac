@@ -561,6 +561,10 @@
                 }
             });
 
+            // Sort free models: ok first, then unknown, then error
+            const healthOrder = {'ok': 0, 'slow': 1, undefined: 2, 'error': 3};
+            openrouterFree.sort((a, b) => (healthOrder[a.health] || 2) - (healthOrder[b.health] || 2));
+
             function addGroup(label, items) {
                 if (!items.length) return;
                 const optgroup = document.createElement('optgroup');
@@ -569,11 +573,19 @@
                     const opt = document.createElement('option');
                     opt.value = m.id;
                     let name = m.name || m.id;
+                    // Health status indicator for free models
+                    if (m.health === 'ok') name = '✅ ' + name;
+                    else if (m.health === 'slow') name = '⚠️ ' + name;
+                    else if (m.health === 'error') name = '❌ ' + name;
+                    // Capability indicators
                     if (m.capabilities) {
                         if (m.capabilities.thinking) name += ' 🧠';
                         if (m.capabilities.vision) name += ' 👁';
                     }
+                    // Latency info
+                    if (m.latency_ms && m.health === 'ok') name += ` (${(m.latency_ms/1000).toFixed(1)}s)`;
                     opt.textContent = name;
+                    if (m.health === 'error') opt.style.color = 'var(--text-dim)';
                     if (m.id === activeModel) opt.selected = true;
                     optgroup.appendChild(opt);
                 });
@@ -584,8 +596,9 @@
             for (const [providerName, providerModels] of Object.entries(otherGroups)) {
                 addGroup(providerName, providerModels);
             }
-            // OpenRouter free models
-            addGroup(`OpenRouter (免费 · ${openrouterFree.length})`, openrouterFree);
+            // OpenRouter free models (with health status)
+            const freeOk = openrouterFree.filter(m => m.health === 'ok' || m.health === 'slow').length;
+            addGroup(`OpenRouter (免费 · ${freeOk}/${openrouterFree.length} 可用)`, openrouterFree);
             // OpenRouter paid models
             addGroup(`OpenRouter (付费 · ${openrouterPaid.length})`, openrouterPaid);
 

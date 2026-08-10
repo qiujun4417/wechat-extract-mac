@@ -1514,6 +1514,109 @@ AI_SESSIONS_FILE = os.path.join(CONFIG_DIR, "ai_sessions.json")
 # Initialize the model router
 _model_router = ModelRouter(AI_CONFIG_FILE)
 
+# ===== Free Model Health Check =====
+# Background thread that periodically tests free models and caches their status
+
+import requests as _req_lib
+
+_model_health_status = {}  # {model_id: {"status": "ok"|"error"|"slow", "latency_ms": int, "error": str, "checked_at": float}}
+_model_health_lock = threading.Lock()
+_MODEL_HEALTH_INTERVAL = 300  # Check every 5 minutes
+
+
+def _check_free_models():
+    """Background task: test all free models and update status."""
+    while True:
+        try:
+            provider = _model_router.get_provider("openrouter")
+            if not provider or not provider.api_key:
+                time.sleep(_MODEL_HEALTH_INTERVAL)
+                continue
+
+            free_models = [
+                m for m in provider.models
+                if isinstance(m, dict) and m.get("free")
+            ]
+
+            if not free_models:
+                time.sleep(_MODEL_HEALTH_INTERVAL)
+                continue
+
+            for m in free_models:
+                model_id = m.get("id", "")
+                if not model_id:
+                    continue
+                try:
+                    start = time.time()
+                    resp = _req_lib.post(
+                        f"{provider.api_base.rstrip('/')}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {provider.api_key}",
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": "https://wechat-extract-mac.local",
+                            "X-OpenRouter-Title": "WeChat Extract AI",
+                        },
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": "Hi"}],
+                            "stream": False,
+                            "max_tokens": 3,
+                        },
+                        timeout=15,
+                    )
+                    latency = int((time.time() - start) * 1000)
+
+                    if resp.status_code == 200:
+                        status = "slow" if latency > 10000 else "ok"
+                        with _model_health_lock:
+                            _model_health_status[model_id] = {
+                                "status": status,
+                                "latency_ms": latency,
+                                "error": "",
+                                "checked_at": time.time(),
+                            }
+                    else:
+                        err_msg = ""
+                        try:
+                            err_msg = resp.json().get("error", {}).get("message", "")
+                        except Exception:
+                            pass
+                        with _model_health_lock:
+                            _model_health_status[model_id] = {
+                                "status": "error",
+                                "latency_ms": latency,
+                                "error": err_msg or f"HTTP {resp.status_code}",
+                                "checked_at": time.time(),
+                            }
+                except _req_lib.exceptions.Timeout:
+                    with _model_health_lock:
+                        _model_health_status[model_id] = {
+                            "status": "error",
+                            "latency_ms": 15000,
+                            "error": "timeout",
+                            "checked_at": time.time(),
+                        }
+                except Exception as e:
+                    with _model_health_lock:
+                        _model_health_status[model_id] = {
+                            "status": "error",
+                            "latency_ms": 0,
+                            "error": str(e)[:80],
+                            "checked_at": time.time(),
+                        }
+                # Small delay between checks to avoid rate limiting
+                time.sleep(2)
+
+        except Exception:
+            pass
+
+        time.sleep(_MODEL_HEALTH_INTERVAL)
+
+
+# Start health check background thread
+_health_thread = threading.Thread(target=_check_free_models, daemon=True)
+_health_thread.start()
+
 # In-memory session store: {session_id: {messages: [...], contacts: [...], title: str, updated: timestamp}}
 _ai_sessions = {}
 
@@ -1636,8 +1739,24 @@ def api_ai_config():
 
 @app.route("/api/ai/models", methods=["GET"])
 def api_ai_models():
-    """Get flat list of all available models for dropdown."""
-    return jsonify({"models": _model_router.get_available_models()})
+    """Get flat list of all available models for dropdown, with health status."""
+    models = _model_router.get_available_models()
+    # Merge health status into model list
+    with _model_health_lock:
+        for m in models:
+            health = _model_health_status.get(m["id"])
+            if health:
+                m["health"] = health["status"]
+                m["latency_ms"] = health["latency_ms"]
+                m["health_error"] = health["error"]
+    return jsonify({"models": models})
+
+
+@app.route("/api/ai/models/status", methods=["GET"])
+def api_ai_models_status():
+    """Get health status of all checked models."""
+    with _model_health_lock:
+        return jsonify(_model_health_status)
 
 
 @app.route("/api/ai/models/discover", methods=["POST"])

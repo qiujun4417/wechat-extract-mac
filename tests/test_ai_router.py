@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from ai_router import (
+    AIError,
     ModelRouter,
     ProviderConfig,
     RouterConfig,
@@ -301,7 +302,7 @@ class TestBuildRequestParams:
         with open(tmp_config, "w") as f:
             json.dump(config, f)
         router = ModelRouter(tmp_config)
-        with pytest.raises(ValueError, match="No configured provider"):
+        with pytest.raises(AIError, match="NO_PROVIDER_AVAILABLE"):
             router.build_request_params("some-model", [])
 
     def test_payload_has_stream_true(self, router_with_openrouter):
@@ -324,12 +325,15 @@ class TestSSRFValidation:
     def test_rejects_http(self):
         config = RouterConfig(providers=[])
         error = validate_api_host("http://api.openai.com/v1", config)
-        assert "HTTPS" in error
+        assert error is not None
+        assert error["error_code"] == "SSRF_HTTPS_REQUIRED"
 
     def test_rejects_unknown_host(self):
         config = RouterConfig(providers=[])
         error = validate_api_host("https://evil.example.com/v1", config)
-        assert "not in allowed list" in error
+        assert error is not None
+        assert error["error_code"] == "SSRF_HOST_BLOCKED"
+        assert "evil.example.com" in error["error"]
 
     def test_allows_configured_provider_host(self):
         """Hosts from configured providers are automatically allowed."""

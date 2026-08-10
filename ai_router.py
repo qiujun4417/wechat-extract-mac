@@ -16,6 +16,39 @@ from typing import Generator, Optional
 import requests as req_lib
 
 
+# ===== Error Codes =====
+
+class AIError(Exception):
+    """AI Router error with code and user-friendly message."""
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
+    def to_dict(self) -> dict:
+        return {"error": self.message, "error_code": self.code}
+
+
+ERROR_MESSAGES = {
+    "PROVIDER_NOT_FOUND": "未找到指定的服务提供商「{provider_id}」，请先在设置中添加",
+    "API_KEY_MISSING": "服务提供商「{provider_name}」未配置 API Key，请在设置中填写",
+    "MODEL_NOT_SELECTED": "未选择模型，请在顶部下拉框选择一个模型或在设置中配置",
+    "NO_PROVIDER_AVAILABLE": "未找到可用的服务提供商，请先在设置中配置 API Key",
+    "SSRF_HTTPS_REQUIRED": "仅支持 HTTPS 协议的 API 地址",
+    "SSRF_HOST_BLOCKED": "API 地址「{hostname}」不在允许列表中，如需添加请联系管理员",
+    "DISCOVER_TIMEOUT": "查询可用模型超时，请检查网络连接后重试",
+    "DISCOVER_CONN_ERROR": "无法连接到服务提供商，请检查网络连接",
+    "DISCOVER_API_ERROR": "服务提供商返回错误（HTTP {status_code}），请检查 API Key 是否有效",
+    "STREAM_TIMEOUT": "请求超时，已重试多次仍无法连接",
+    "STREAM_CONN_ERROR": "连接错误：{detail}",
+    "STREAM_API_ERROR": "API 返回错误：{detail}",
+    "STREAM_UNEXPECTED": "未知错误：{detail}",
+    "CONFIG_ACTION_UNKNOWN": "未知操作：{action}",
+    "CONFIG_API_BASE_REQUIRED": "请填写 API Base URL",
+    "CONFIG_PROVIDER_NOT_FOUND": "未找到指定的服务提供商",
+}
+
+
 # ===== Data Classes =====
 
 @dataclass
@@ -108,15 +141,16 @@ def get_allowed_hosts(config: RouterConfig) -> list:
     return hosts
 
 
-def validate_api_host(api_base: str, config: RouterConfig) -> Optional[str]:
-    """Validate that an API base URL is allowed. Returns error message or None."""
+def validate_api_host(api_base: str, config: RouterConfig) -> Optional[dict]:
+    """Validate that an API base URL is allowed. Returns error dict or None."""
     from urllib.parse import urlparse
     parsed = urlparse(api_base)
     if parsed.scheme != "https":
-        return "Only HTTPS API URLs are allowed"
+        return {"error": ERROR_MESSAGES["SSRF_HTTPS_REQUIRED"], "error_code": "SSRF_HTTPS_REQUIRED"}
     allowed = get_allowed_hosts(config)
     if not any(parsed.hostname == h or (parsed.hostname and parsed.hostname.endswith("." + h)) for h in allowed):
-        return f"API host '{parsed.hostname}' not in allowed list. Contact admin to add it."
+        msg = ERROR_MESSAGES["SSRF_HOST_BLOCKED"].format(hostname=parsed.hostname)
+        return {"error": msg, "error_code": "SSRF_HOST_BLOCKED"}
     return None
 
 
@@ -306,13 +340,13 @@ class ModelRouter:
 
     def discover_models(self, provider_id: str) -> dict:
         """Query a provider's /v1/models endpoint to discover available models.
-        Returns {"models": [...], "error": None} or {"models": [], "error": "..."}
+        Returns {"models": [...], "error": None} or {"models": [], "error": "...", "error_code": "..."}
         """
         provider = self.get_provider(provider_id)
         if not provider:
-            return {"models": [], "error": f"Provider '{provider_id}' not found"}
+            return {"models": [], "error": ERROR_MESSAGES["PROVIDER_NOT_FOUND"].format(provider_id=provider_id), "error_code": "PROVIDER_NOT_FOUND"}
         if not provider.api_key:
-            return {"models": [], "error": "API key not configured for this provider"}
+            return {"models": [], "error": ERROR_MESSAGES["API_KEY_MISSING"].format(provider_name=provider.name), "error_code": "API_KEY_MISSING"}
 
         try:
             headers = {"Authorization": f"Bearer {provider.api_key}"}
@@ -327,7 +361,7 @@ class ModelRouter:
             )
 
             if resp.status_code != 200:
-                return {"models": [], "error": f"API returned status {resp.status_code}"}
+                return {"models": [], "error": ERROR_MESSAGES["DISCOVER_API_ERROR"].format(status_code=resp.status_code), "error_code": "DISCOVER_API_ERROR"}
 
             data = resp.json()
             raw_models = data.get("data", [])
@@ -359,9 +393,9 @@ class ModelRouter:
             return {"models": discovered, "error": None}
 
         except req_lib.exceptions.Timeout:
-            return {"models": [], "error": "Request timed out"}
+            return {"models": [], "error": ERROR_MESSAGES["DISCOVER_TIMEOUT"], "error_code": "DISCOVER_TIMEOUT"}
         except req_lib.exceptions.ConnectionError:
-            return {"models": [], "error": "Connection failed"}
+            return {"models": [], "error": ERROR_MESSAGES["DISCOVER_CONN_ERROR"], "error_code": "DISCOVER_CONN_ERROR"}
         except Exception as e:
             return {"models": [], "error": str(e)}
 
@@ -374,19 +408,19 @@ class ModelRouter:
         Returns:
             tuple: (api_url, headers_dict, payload_dict)
         Raises:
-            ValueError: if no valid provider found
+            AIError: if no valid provider found
         """
         provider = self.get_provider_for_model(model_id)
         if not provider:
-            raise ValueError("No configured provider found for this model. Please configure API settings.")
+            raise AIError("NO_PROVIDER_AVAILABLE", ERROR_MESSAGES["NO_PROVIDER_AVAILABLE"])
         if not provider.api_key:
-            raise ValueError("API Key not configured for provider: " + provider.name)
+            raise AIError("API_KEY_MISSING", ERROR_MESSAGES["API_KEY_MISSING"].format(provider_name=provider.name))
 
         # Resolve model_id: if empty, use active model or provider's first model
         if not model_id:
             model_id = self.get_active_model()
         if not model_id:
-            raise ValueError("No model selected. Please select a model in settings.")
+            raise AIError("MODEL_NOT_SELECTED", ERROR_MESSAGES["MODEL_NOT_SELECTED"])
 
         api_url = f"{provider.api_base.rstrip('/')}/chat/completions"
 
@@ -461,7 +495,7 @@ def stream_chat_sse(url: str, headers: dict, payload: dict,
                     time.sleep(wait)
                     continue
 
-                yield _sse_event({"error": error_msg})
+                yield _sse_event({"error": ERROR_MESSAGES["STREAM_API_ERROR"].format(detail=error_msg)})
                 yield _sse_event({"done": True})
                 return
 
@@ -516,7 +550,7 @@ def stream_chat_sse(url: str, headers: dict, payload: dict,
                 yield _sse_event({"content": f"\n\n⏳ 请求超时，{wait}秒后重试 ({attempt+1}/{max_retries})...\n\n"})
                 time.sleep(wait)
                 continue
-            yield _sse_event({"error": "Request timed out after retries"})
+            yield _sse_event({"error": ERROR_MESSAGES["STREAM_TIMEOUT"]})
             yield _sse_event({"done": True})
 
         except req_lib.exceptions.ConnectionError as e:
@@ -525,11 +559,11 @@ def stream_chat_sse(url: str, headers: dict, payload: dict,
                 yield _sse_event({"content": f"\n\n⏳ 连接错误，{wait}秒后重试...\n\n"})
                 time.sleep(wait)
                 continue
-            yield _sse_event({"error": f"Connection error: {e}"})
+            yield _sse_event({"error": ERROR_MESSAGES["STREAM_CONN_ERROR"].format(detail=str(e))})
             yield _sse_event({"done": True})
 
         except Exception as e:
-            yield _sse_event({"error": f"Unexpected error: {e}"})
+            yield _sse_event({"error": ERROR_MESSAGES["STREAM_UNEXPECTED"].format(detail=str(e))})
             yield _sse_event({"done": True})
             return
 

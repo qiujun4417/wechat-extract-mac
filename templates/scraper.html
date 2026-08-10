@@ -676,7 +676,12 @@
                         </div>
 
                         <div class="prompt-area">
-                            <label>AI 分析提示词（可自定义）：</label>
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                                <label style="margin:0;">AI 分析提示词（可自定义）：</label>
+                                <select id="scraperModelSelect" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-color);font-size:12px;max-width:200px;" title="选择模型">
+                                    <option value="">默认模型</option>
+                                </select>
+                            </div>
                             <textarea id="promptInput">给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。</textarea>
                         </div>
 
@@ -804,6 +809,7 @@
         // ===== Init =====
         loadAccounts();
         loadSessions();
+        loadScraperModels();
         document.getElementById('accountSearch').addEventListener('input', debounce(renderAccounts, 200));
 
         // Auto-resize followup textarea
@@ -958,6 +964,39 @@
                 entry.innerHTML = `<div class="role-label ${labelCls}">${label}</div>${contentHtml}`;
                 container.appendChild(entry);
             }
+        }
+
+        // ===== Load Models for Selector =====
+        async function loadScraperModels() {
+            try {
+                const resp = await fetch('/api/ai/models');
+                const data = await resp.json();
+                const sel = document.getElementById('scraperModelSelect');
+                if (data.models && data.models.length > 0) {
+                    sel.innerHTML = '<option value="">默认模型</option>';
+                    // Group by provider
+                    const groups = {};
+                    data.models.forEach(m => {
+                        const key = m.provider_name || m.provider || 'Other';
+                        if (!groups[key]) groups[key] = [];
+                        groups[key].push(m);
+                    });
+                    for (const [providerName, models] of Object.entries(groups)) {
+                        const optgroup = document.createElement('optgroup');
+                        optgroup.label = providerName;
+                        models.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m.id;
+                            opt.textContent = m.name || m.id;
+                            optgroup.appendChild(opt);
+                        });
+                        sel.appendChild(optgroup);
+                    }
+                    // Restore last selection
+                    const saved = localStorage.getItem('ai_active_model');
+                    if (saved) sel.value = saved;
+                }
+            } catch(e) { /* ignore */ }
         }
 
         // ===== Load Official Accounts =====
@@ -1388,11 +1427,13 @@
                     job_id: currentJobId,
                     prompt: prompt,
                     messages: conversationMessages,
+                    model: document.getElementById('scraperModelSelect').value || '',
                 };
             } else {
                 requestBody = {
                     job_id: currentJobId,
                     prompt: prompt,
+                    model: document.getElementById('scraperModelSelect').value || '',
                 };
             }
 

@@ -1506,8 +1506,13 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 # ===== AI Chat Feature =====
 
+from ai_router import ModelRouter, stream_chat_sse, get_config_for_api, ProviderConfig
+
 AI_CONFIG_FILE = os.path.join(CONFIG_DIR, "ai_config.json")
 AI_SESSIONS_FILE = os.path.join(CONFIG_DIR, "ai_sessions.json")
+
+# Initialize the model router
+_model_router = ModelRouter(AI_CONFIG_FILE)
 
 # In-memory session store: {session_id: {messages: [...], contacts: [...], title: str, updated: timestamp}}
 _ai_sessions = {}
@@ -1536,20 +1541,6 @@ def _save_sessions():
 _load_sessions()
 
 
-def load_ai_config():
-    """Load AI configuration from file."""
-    if os.path.exists(AI_CONFIG_FILE):
-        with open(AI_CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"api_base": "https://api.moonshot.cn/v1", "api_key": "", "model": "kimi-k2-0711-128k"}
-
-
-def save_ai_config(config):
-    """Save AI configuration to file."""
-    with open(AI_CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-
-
 @app.route("/ai")
 def ai_page():
     return render_template("ai.html")
@@ -1557,43 +1548,110 @@ def ai_page():
 
 @app.route("/api/ai/config", methods=["GET", "POST"])
 def api_ai_config():
+    """Get or update AI configuration (multi-provider)."""
+    from ai_router import validate_api_host
+
     if request.method == "GET":
-        config = load_ai_config()
-        # Mask the API key for security
-        masked = dict(config)
-        if masked.get("api_key"):
-            key = masked["api_key"]
-            if len(key) > 8:
-                masked["api_key"] = key[:4] + "*" * (len(key) - 8) + key[-4:]
-            else:
-                masked["api_key"] = "****"
-        return jsonify(masked)
+        return jsonify(get_config_for_api(_model_router))
     else:
         data = request.get_json()
-        config = load_ai_config()
-        if data.get("api_base"):
-            new_base = data["api_base"].rstrip("/")
-            # SSRF prevention: only allow known AI API domains
-            from urllib.parse import urlparse
-            parsed = urlparse(new_base)
-            ALLOWED_HOSTS = [
-                "api.moonshot.cn", "api.openai.com", "api.anthropic.com",
-                "api.deepseek.com", "api.together.xyz", "api.groq.com",
-                "generativelanguage.googleapis.com", "dashscope.aliyuncs.com",
-                "api.siliconflow.cn", "api.lingyiwanwu.com", "api.baichuan-ai.com",
-                "api.minimax.chat", "api.zhipuai.cn",
-            ]
-            if parsed.scheme != "https":
-                return jsonify({"error": "Only HTTPS API URLs are allowed"}), 400
-            if not any(parsed.hostname == h or (parsed.hostname and parsed.hostname.endswith("." + h)) for h in ALLOWED_HOSTS):
-                return jsonify({"error": f"API host '{parsed.hostname}' not in allowed list. Contact admin to add it."}), 400
-            config["api_base"] = new_base
-        if data.get("api_key") and "****" not in data["api_key"]:
-            config["api_key"] = data["api_key"]
-        if data.get("model"):
-            config["model"] = data["model"]
-        save_ai_config(config)
-        return jsonify({"success": True})
+        action = data.get("action", "")
+
+        # Legacy format support (兜底): direct api_base/api_key/model update
+        if not action and ("api_base" in data or "api_key" in data or "model" in data):
+            # Handle as custom provider update (backward compatible)
+            provider = _model_router.get_provider("custom") or _model_router.get_provider(
+                _model_router.config.active_provider)
+            if not provider:
+                # Create a new custom provider
+                provider = ProviderConfig(
+                    id="custom",
+                    name="Custom",
+                    provider_type="openai_compatible",
+                    api_base="",
+                    api_key="",
+                    models=[],
+                    capabilities={"thinking": True, "vision": True, "file_upload": False},
+                )
+                _model_router.add_provider(provider)
+
+            if data.get("api_base"):
+                new_base = data["api_base"].rstrip("/")
+                error = validate_api_host(new_base, _model_router.config)
+                if error:
+                    return jsonify({"error": error}), 400
+                provider.api_base = new_base
+            if data.get("api_key") and "****" not in data["api_key"]:
+                provider.api_key = data["api_key"]
+            if data.get("model"):
+                model = data["model"]
+                if model not in [m if isinstance(m, str) else m.get("id") for m in provider.models]:
+                    provider.models.append(model)
+                _model_router.set_active_model(model)
+            _model_router.save()
+            return jsonify({"success": True})
+
+        # New multi-provider actions
+        if action == "add_provider":
+            provider_data = data.get("provider", {})
+            if not provider_data.get("api_base"):
+                return jsonify({"error": "api_base is required"}), 400
+            new_base = provider_data["api_base"].rstrip("/")
+            error = validate_api_host(new_base, _model_router.config)
+            if error:
+                return jsonify({"error": error}), 400
+            provider_data["api_base"] = new_base
+            provider = ProviderConfig.from_dict(provider_data)
+            _model_router.add_provider(provider)
+            return jsonify({"success": True})
+
+        elif action == "update_provider":
+            provider_id = data.get("provider_id")
+            updates = data.get("updates", {})
+            if updates.get("api_base"):
+                new_base = updates["api_base"].rstrip("/")
+                error = validate_api_host(new_base, _model_router.config)
+                if error:
+                    return jsonify({"error": error}), 400
+                updates["api_base"] = new_base
+            if updates.get("api_key") and "****" in updates["api_key"]:
+                del updates["api_key"]  # Don't overwrite with masked value
+            if _model_router.update_provider(provider_id, updates):
+                return jsonify({"success": True})
+            return jsonify({"error": "Provider not found"}), 404
+
+        elif action == "remove_provider":
+            provider_id = data.get("provider_id")
+            _model_router.remove_provider(provider_id)
+            return jsonify({"success": True})
+
+        elif action == "set_active_model":
+            model_id = data.get("model")
+            if model_id:
+                _model_router.set_active_model(model_id)
+            return jsonify({"success": True})
+
+        else:
+            return jsonify({"error": f"Unknown action: {action}"}), 400
+
+
+@app.route("/api/ai/models", methods=["GET"])
+def api_ai_models():
+    """Get flat list of all available models for dropdown."""
+    return jsonify({"models": _model_router.get_available_models()})
+
+
+@app.route("/api/ai/models/discover", methods=["POST"])
+def api_ai_models_discover():
+    """Trigger model discovery on a specific provider."""
+    data = request.get_json()
+    provider_id = data.get("provider_id", "")
+    if not provider_id:
+        return jsonify({"error": "provider_id is required"}), 400
+    result = _model_router.discover_models(provider_id)
+    if result["error"]:
+        return jsonify({"error": result["error"], "models": []}), 400
+    return jsonify({"models": result["models"]})
 
 
 @app.route("/api/ai/sessions", methods=["GET"])
@@ -1667,8 +1725,6 @@ def api_ai_session_delete(sid):
 @app.route("/api/ai/chat", methods=["POST"])
 def api_ai_chat():
     """Stream AI chat response via SSE."""
-    import requests as req_lib
-
     data = request.get_json()
     user_messages = data.get("messages", [])
     context_username = data.get("context_username")
@@ -1676,6 +1732,7 @@ def api_ai_chat():
     thinking_param = data.get("thinking")
     file_ids = data.get("file_ids", [])
     images = data.get("images", [])
+    model_id = data.get("model", "")  # Per-request model override
 
     # Support both single and multiple context usernames
     if context_username and not context_usernames:
@@ -1688,19 +1745,25 @@ def api_ai_chat():
     print(f"  Thinking param: {thinking_param}")
     print(f"  File IDs: {file_ids}")
     print(f"  Images count: {len(images)}")
+    print(f"  Model override: {model_id or '(default)'}")
 
-    config = load_ai_config()
-    print(f"  Model: {config.get('model')}")
-    print(f"  API Base: {config.get('api_base')}")
-    print(f"  API Key: {config.get('api_key', '')[:8]}...")
+    # Resolve model and provider via router
+    if not model_id:
+        model_id = _model_router.get_active_model()
 
-    if not config.get("api_key"):
-        print(f"  [ERROR] API Key not configured")
+    try:
+        api_url, headers, payload = _model_router.build_request_params(
+            model_id, [], thinking=thinking_param
+        )
+    except ValueError as e:
         def error_gen():
-            yield f"data: {json.dumps({'error': 'API Key not configured'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
         return Response(stream_with_context(error_gen()), mimetype="text/event-stream; charset=utf-8",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    print(f"  Model: {model_id}")
+    print(f"  API URL: {api_url}")
 
     # Build messages list
     api_messages = []
@@ -1730,7 +1793,6 @@ def api_ai_chat():
         time_from = data.get("time_from", 0)  # unix timestamp
         time_to = data.get("time_to", 0)  # unix timestamp
         context_limit = data.get("context_limit", 200)  # max messages per contact
-
 
         for uname in context_usernames:
             # Load messages with time range if specified
@@ -1795,127 +1857,14 @@ def api_ai_chat():
             print(f"  Last user message: {last_msg[:100]}")
     print(f"{'='*60}")
 
-    def generate():
-        max_retries = 3
-        retry_delay = 2  # seconds
+    # Update payload with built messages
+    payload["messages"] = api_messages
 
-        for attempt in range(max_retries):
-            try:
-                api_url = f"{config['api_base']}/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {config['api_key']}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "model": config["model"],
-                    "messages": api_messages,
-                    "stream": True,
-                }
-
-                # Handle thinking parameter
-                if thinking_param is False:
-                    payload["thinking"] = {"type": "disabled"}
-                elif thinking_param is True:
-                    payload["thinking"] = {"type": "enabled", "budget_tokens": 4096}
-                # If "auto" or not set, don't add thinking param
-
-                print(f"[AI Chat] Calling API: {api_url} (attempt {attempt+1}/{max_retries})")
-                print(f"[AI Chat] Payload: model={config['model']}, messages={len(api_messages)}, stream=True, thinking={thinking_param}")
-
-                resp = req_lib.post(api_url, json=payload, headers=headers, stream=True, timeout=120)
-                print(f"[AI Chat] Response status: {resp.status_code}")
-                print(f"[AI Chat] Response encoding: {resp.encoding}")
-
-                if resp.status_code != 200:
-                    error_msg = f"API returned status {resp.status_code}"
-                    try:
-                        error_body = resp.json()
-                        if "error" in error_body:
-                            error_msg = error_body["error"].get("message", error_msg)
-                    except Exception:
-                        pass
-
-                    # Retry on overload/rate limit (429 or 503 or "overloaded" in message)
-                    is_retryable = (
-                        resp.status_code in (429, 503) or
-                        "overload" in error_msg.lower() or
-                        "rate" in error_msg.lower() or
-                        "try again" in error_msg.lower()
-                    )
-                    if is_retryable and attempt < max_retries - 1:
-                        wait = retry_delay * (attempt + 1)
-                        retry_msg = f"\n\n⏳ 服务繁忙，{wait}秒后自动重试 ({attempt+1}/{max_retries})...\n\n"
-                        yield f"data: {json.dumps({'content': retry_msg}, ensure_ascii=False)}\n\n"
-                        time.sleep(wait)
-                        continue
-
-                    yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-                    return
-
-                # Success - stream response
-                thinking_buffer = ""
-                for raw_line in resp.iter_lines():
-                    if not raw_line:
-                        continue
-                    line = raw_line.decode("utf-8", errors="replace")
-                    if line.startswith("data: "):
-                        payload_str = line[6:]
-                        if payload_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(payload_str)
-                            choices = chunk.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                # Handle both content and reasoning_content (thinking models like Kimi K3)
-                                content = delta.get("content")
-                                reasoning = delta.get("reasoning_content")
-                                if content:
-                                    yield f"data: {json.dumps({'content': content}, ensure_ascii=False)}\n\n"
-                                elif reasoning:
-                                    # Buffer thinking output and yield when >= 20 chars
-                                    thinking_buffer += reasoning
-                                    if len(thinking_buffer) >= 20:
-                                        yield f"data: {json.dumps({'thinking': thinking_buffer}, ensure_ascii=False)}\n\n"
-                                        thinking_buffer = ""
-                        except json.JSONDecodeError:
-                            continue
-
-                # Flush remaining thinking buffer
-                if thinking_buffer:
-                    yield f"data: {json.dumps({'thinking': thinking_buffer}, ensure_ascii=False)}\n\n"
-
-                yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-                return  # Success, exit retry loop
-
-            except req_lib.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    wait = retry_delay * (attempt + 1)
-                    timeout_msg = f"\n\n⏳ 请求超时，{wait}秒后重试 ({attempt+1}/{max_retries})...\n\n"
-                    yield f"data: {json.dumps({'content': timeout_msg}, ensure_ascii=False)}\n\n"
-                    time.sleep(wait)
-                    continue
-                yield f"data: {json.dumps({'error': 'Request timed out after retries'}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-            except req_lib.exceptions.ConnectionError as e:
-                if attempt < max_retries - 1:
-                    wait = retry_delay * (attempt + 1)
-                    conn_msg = f"\n\n⏳ 连接错误，{wait}秒后重试...\n\n"
-                    yield f"data: {json.dumps({'content': conn_msg}, ensure_ascii=False)}\n\n"
-                    time.sleep(wait)
-                    continue
-                err_str = str(e)
-                yield f"data: {json.dumps({'error': 'Connection error: ' + err_str}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                err_str = str(e)
-                yield f"data: {json.dumps({'error': 'Unexpected error: ' + err_str}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-                return
+    print(f"[AI Chat] Calling API: {api_url}")
+    print(f"[AI Chat] Payload: model={model_id}, messages={len(api_messages)}, stream=True, thinking={thinking_param}")
 
     return Response(
-        stream_with_context(generate()),
+        stream_with_context(stream_chat_sse(api_url, headers, payload)),
         mimetype="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
@@ -1923,20 +1872,28 @@ def api_ai_chat():
 
 @app.route("/api/ai/upload", methods=["POST"])
 def api_ai_upload():
-    """Upload a file to the AI API and return file_id."""
-    config = load_ai_config()
-    if not config.get("api_key"):
+    """Upload a file to the AI API and return file_id.
+    Only works with providers that support file_upload (e.g., Kimi).
+    """
+    import requests as req_lib
+
+    # Find active provider - must support file upload
+    provider = _model_router._get_active_provider()
+    if not provider:
+        return jsonify({"error": "No AI provider configured"}), 400
+    if not provider.api_key:
         return jsonify({"error": "API Key not configured"}), 400
+    if not provider.capabilities.get("file_upload"):
+        return jsonify({"error": f"Provider '{provider.name}' does not support file upload. Use a direct Kimi connection."}), 400
 
     file = request.files.get("file")
     if not file:
         return jsonify({"error": "No file provided"}), 400
 
-    import requests as req_lib
     try:
         resp = req_lib.post(
-            f"{config['api_base']}/files",
-            headers={"Authorization": f"Bearer {config['api_key']}"},
+            f"{provider.api_base.rstrip('/')}/files",
+            headers={"Authorization": f"Bearer {provider.api_key}"},
             files={"file": (file.filename, file.stream, file.content_type)},
             data={"purpose": "file-extract"},
             timeout=60
@@ -2193,11 +2150,10 @@ def api_articles_scrape():
 @app.route("/api/articles/analyze", methods=["POST"])
 def api_articles_analyze():
     """Stream AI analysis of scraped articles via SSE."""
-    import requests as req_lib
-
     data = request.get_json()
     job_id = data.get("job_id")
     prompt = data.get("prompt", "")
+    model_id = data.get("model", "")  # Per-request model override
 
     # Default prompt
     if not prompt:
@@ -2244,10 +2200,17 @@ def api_articles_analyze():
                         mimetype="text/event-stream; charset=utf-8",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    config = load_ai_config()
-    if not config.get("api_key"):
+    # Resolve model and provider via router
+    if not model_id:
+        model_id = _model_router.get_active_model()
+
+    try:
+        api_url, headers, payload = _model_router.build_request_params(
+            model_id, [], thinking=None
+        )
+    except ValueError as e:
         def err():
-            yield f"data: {json.dumps({'error': 'API Key not configured'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         return Response(stream_with_context(err()),
                         mimetype="text/event-stream; charset=utf-8",
@@ -2306,95 +2269,16 @@ def api_articles_analyze():
         ]
 
     print(f"\n{'='*60}")
-    print(f"[Article Analysis] {len(successful)} articles, prompt: {prompt[:80]}...")
+    print(f"[Article Analysis] {len(successful)} articles, model: {model_id}")
+    print(f"  Prompt: {prompt[:80]}...")
     print(f"  Context size: {len(articles_context)} chars")
     print(f"{'='*60}")
 
-    def generate():
-        max_retries = 3
-        retry_delay = 2
-
-        for attempt in range(max_retries):
-            try:
-                api_url = f"{config['api_base']}/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {config['api_key']}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "model": config["model"],
-                    "messages": api_messages,
-                    "stream": True,
-                }
-
-                resp = req_lib.post(api_url, json=payload, headers=headers,
-                                    stream=True, timeout=180)
-
-                if resp.status_code != 200:
-                    error_msg = f"API returned status {resp.status_code}"
-                    try:
-                        error_body = resp.json()
-                        if "error" in error_body:
-                            error_msg = error_body["error"].get("message", error_msg)
-                    except Exception:
-                        pass
-
-                    is_retryable = (
-                        resp.status_code in (429, 503) or
-                        "overload" in error_msg.lower() or
-                        "rate" in error_msg.lower()
-                    )
-                    if is_retryable and attempt < max_retries - 1:
-                        wait = retry_delay * (attempt + 1)
-                        yield f"data: {json.dumps({'content': f'⏳ 服务繁忙，{wait}秒后重试...'}, ensure_ascii=False)}\n\n"
-                        time.sleep(wait)
-                        continue
-
-                    yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'done': True})}\n\n"
-                    return
-
-                # Stream response
-                for raw_line in resp.iter_lines():
-                    if not raw_line:
-                        continue
-                    line = raw_line.decode("utf-8", errors="replace")
-                    if line.startswith("data: "):
-                        payload_str = line[6:]
-                        if payload_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(payload_str)
-                            choices = chunk.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content")
-                                reasoning = delta.get("reasoning_content")
-                                if content:
-                                    yield f"data: {json.dumps({'content': content}, ensure_ascii=False)}\n\n"
-                                elif reasoning:
-                                    yield f"data: {json.dumps({'thinking': reasoning}, ensure_ascii=False)}\n\n"
-                        except json.JSONDecodeError:
-                            continue
-
-                yield f"data: {json.dumps({'done': True})}\n\n"
-                return
-
-            except req_lib.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    wait = retry_delay * (attempt + 1)
-                    yield f"data: {json.dumps({'content': f'⏳ 超时，{wait}秒后重试...'}, ensure_ascii=False)}\n\n"
-                    time.sleep(wait)
-                    continue
-                yield f"data: {json.dumps({'error': 'Request timed out'}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
-                return
+    # Update payload with built messages (longer timeout for article analysis)
+    payload["messages"] = api_messages
 
     return Response(
-        stream_with_context(generate()),
+        stream_with_context(stream_chat_sse(api_url, headers, payload, timeout=180)),
         mimetype="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )

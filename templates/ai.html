@@ -120,6 +120,24 @@
         .modal .btn-primary:hover { background: var(--accent-hover); }
         .modal .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 
+        /* Settings tabs */
+        .settings-tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+        .settings-tab { padding: 10px 16px; font-size: 13px; cursor: pointer; color: var(--text-dim); border-bottom: 2px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
+        .settings-tab:hover { color: var(--text); }
+        .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+        .settings-panel { display: none; }
+        .settings-panel.active { display: block; }
+
+        /* Model selector in top bar */
+        .model-select { padding: 6px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px; outline: none; cursor: pointer; max-width: 220px; }
+        .model-select:hover { border-color: var(--accent); }
+        .model-select:focus { border-color: var(--accent); }
+
+        /* Discover button */
+        .btn-discover { padding: 8px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); cursor: pointer; font-size: 12px; transition: all 0.2s; }
+        .btn-discover:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-discover:disabled { opacity: 0.5; cursor: not-allowed; }
+
         /* Contact picker modal */
         .contact-search { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; margin-bottom: 12px; }
         .contact-search:focus { border-color: var(--accent); }
@@ -329,6 +347,9 @@
                 <input type="checkbox" id="thinkingToggle" checked> 🧠 深度思考
             </label>
         </div>
+        <select class="model-select" id="modelSelect" onchange="onModelChange(this.value)" title="选择模型">
+            <option value="">加载中...</option>
+        </select>
         <button class="config-btn" onclick="openConfig()">⚙️ 设置</button>
         <button class="config-btn" id="themeToggle" onclick="toggleTheme()" title="切换主题">🌙</button>
     </div>
@@ -369,23 +390,43 @@
     <div class="modal-overlay" id="configModal">
         <div class="modal">
             <h2>API 设置 <span class="close-btn" onclick="closeConfig()">✕</span></h2>
-            <div class="form-group">
-                <label>API Base URL</label>
-                <input type="text" id="cfgApiBase" placeholder="https://api.moonshot.cn/v1">
-                <div class="hint">支持 Kimi、OpenAI、Claude、DeepSeek 等兼容接口</div>
+            <div class="settings-tabs">
+                <button class="settings-tab active" onclick="switchSettingsTab('openrouter')">OpenRouter (推荐)</button>
+                <button class="settings-tab" onclick="switchSettingsTab('custom')">自定义接口</button>
             </div>
-            <div class="form-group">
-                <label>API Key</label>
-                <input type="password" id="cfgApiKey" placeholder="sk-...">
+            <!-- OpenRouter Tab -->
+            <div class="settings-panel active" id="panelOpenrouter">
+                <div class="form-group">
+                    <label>OpenRouter API Key</label>
+                    <input type="password" id="cfgOpenrouterKey" placeholder="sk-or-v1-...">
+                    <div class="hint">一个 Key 访问 400+ 模型 — 注册 <a href="https://openrouter.ai" target="_blank" style="color:var(--accent)">openrouter.ai</a> 获取</div>
+                </div>
+                <div class="btn-row" style="justify-content:space-between">
+                    <button class="btn-discover" id="btnDiscover" onclick="discoverModels()">🔍 发现可用模型</button>
+                    <button class="btn btn-primary" onclick="saveOpenrouterConfig()">保存</button>
+                </div>
+                <div id="discoverStatus" style="font-size:12px;color:var(--text-dim);margin-top:10px;display:none;"></div>
             </div>
-            <div class="form-group">
-                <label>Model</label>
-                <input type="text" id="cfgModel" placeholder="kimi-k3-0901-128k">
-                <div class="hint">Kimi K3: kimi-k3-0901-128k | GPT-4o: gpt-4o | Claude: claude-sonnet-4-20250514</div>
-            </div>
-            <div class="btn-row">
-                <button class="btn btn-ghost" onclick="closeConfig()">取消</button>
-                <button class="btn btn-primary" onclick="saveConfig()">保存</button>
+            <!-- Custom Provider Tab -->
+            <div class="settings-panel" id="panelCustom">
+                <div class="form-group">
+                    <label>API Base URL</label>
+                    <input type="text" id="cfgApiBase" placeholder="https://api.moonshot.cn/v1">
+                    <div class="hint">支持 Kimi、OpenAI、DeepSeek 等 OpenAI 兼容接口</div>
+                </div>
+                <div class="form-group">
+                    <label>API Key</label>
+                    <input type="password" id="cfgApiKey" placeholder="sk-...">
+                </div>
+                <div class="form-group">
+                    <label>Model</label>
+                    <input type="text" id="cfgModel" placeholder="kimi-k3-0901-128k">
+                    <div class="hint">Kimi K3: kimi-k3-0901-128k | GPT-4o: gpt-4o | Claude: claude-sonnet-4-20250514</div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost" onclick="closeConfig()">取消</button>
+                    <button class="btn btn-primary" onclick="saveCustomConfig()">保存</button>
+                </div>
             </div>
         </div>
     </div>
@@ -446,25 +487,197 @@
         loadSessions().then(() => initPreselected());
 
         // === Config ===
+        let _currentModels = []; // cached model list for dropdown
+
         function loadConfig() {
             fetch('/api/ai/config').then(r => r.json()).then(cfg => {
-                document.getElementById('cfgApiBase').value = cfg.api_base || '';
-                document.getElementById('cfgApiKey').value = '';
-                document.getElementById('cfgApiKey').placeholder = cfg.api_key_masked || 'sk-...';
-                document.getElementById('cfgModel').value = cfg.model || '';
+                // New multi-provider format
+                if (cfg.providers) {
+                    // Populate OpenRouter tab
+                    const orProvider = cfg.providers.find(p => p.provider_type === 'openrouter');
+                    if (orProvider) {
+                        document.getElementById('cfgOpenrouterKey').value = '';
+                        document.getElementById('cfgOpenrouterKey').placeholder = orProvider.api_key || 'sk-or-v1-...';
+                    }
+                    // Populate Custom tab with first non-openrouter provider
+                    const customProvider = cfg.providers.find(p => p.provider_type !== 'openrouter');
+                    if (customProvider) {
+                        document.getElementById('cfgApiBase').value = customProvider.api_base || '';
+                        document.getElementById('cfgApiKey').value = '';
+                        document.getElementById('cfgApiKey').placeholder = customProvider.api_key || 'sk-...';
+                        document.getElementById('cfgModel').value = '';
+                    }
+                    // Load model selector
+                    if (cfg.models && cfg.models.length > 0) {
+                        populateModelSelect(cfg.models, cfg.active_model);
+                    }
+                } else {
+                    // Legacy format fallback
+                    document.getElementById('cfgApiBase').value = cfg.api_base || '';
+                    document.getElementById('cfgApiKey').value = '';
+                    document.getElementById('cfgApiKey').placeholder = cfg.api_key || 'sk-...';
+                    document.getElementById('cfgModel').value = cfg.model || '';
+                }
             });
+            // Also fetch model list separately
+            loadModelList();
         }
+
+        function loadModelList() {
+            fetch('/api/ai/models').then(r => r.json()).then(data => {
+                if (data.models && data.models.length > 0) {
+                    _currentModels = data.models;
+                    const activeModel = localStorage.getItem('ai_active_model') || '';
+                    populateModelSelect(data.models, activeModel);
+                } else {
+                    // No models discovered — show placeholder
+                    const sel = document.getElementById('modelSelect');
+                    sel.innerHTML = '<option value="">未配置模型</option>';
+                }
+            }).catch(() => {});
+        }
+
+        function populateModelSelect(models, activeModel) {
+            _currentModels = models;
+            const sel = document.getElementById('modelSelect');
+            sel.innerHTML = '';
+
+            // Group by provider
+            const groups = {};
+            models.forEach(m => {
+                const key = m.provider_name || m.provider || 'Other';
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(m);
+            });
+
+            for (const [providerName, providerModels] of Object.entries(groups)) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = providerName;
+                providerModels.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    // Add capability indicators
+                    let label = m.name || m.id;
+                    if (m.capabilities) {
+                        if (m.capabilities.thinking) label += ' 🧠';
+                        if (m.capabilities.vision) label += ' 👁';
+                    }
+                    opt.textContent = label;
+                    if (m.id === activeModel) opt.selected = true;
+                    optgroup.appendChild(opt);
+                });
+                sel.appendChild(optgroup);
+            }
+
+            // If no active match, select first
+            if (!activeModel && sel.options.length > 0) {
+                sel.selectedIndex = 0;
+            }
+        }
+
+        window.onModelChange = (modelId) => {
+            localStorage.setItem('ai_active_model', modelId);
+            // Persist to backend
+            fetch('/api/ai/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: 'set_active_model', model: modelId})
+            });
+            // Update thinking toggle visibility based on capabilities
+            const model = _currentModels.find(m => m.id === modelId);
+            if (model && model.capabilities) {
+                document.querySelector('.thinking-toggle').style.display =
+                    model.capabilities.thinking ? '' : 'none';
+            }
+        };
+
+        window.switchSettingsTab = (tab) => {
+            document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+            if (tab === 'openrouter') {
+                document.querySelectorAll('.settings-tab')[0].classList.add('active');
+                document.getElementById('panelOpenrouter').classList.add('active');
+            } else {
+                document.querySelectorAll('.settings-tab')[1].classList.add('active');
+                document.getElementById('panelCustom').classList.add('active');
+            }
+        };
+
         window.openConfig = () => document.getElementById('configModal').classList.add('show');
         window.closeConfig = () => document.getElementById('configModal').classList.remove('show');
-        window.saveConfig = async () => {
+
+        window.saveOpenrouterConfig = async () => {
+            const key = document.getElementById('cfgOpenrouterKey').value.trim();
+            if (!key) { showToast('请输入 OpenRouter API Key'); return; }
+            const resp = await fetch('/api/ai/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    action: 'update_provider',
+                    provider_id: 'openrouter',
+                    updates: { api_key: key }
+                })
+            });
+            if (resp.ok) {
+                showToast('OpenRouter Key 已保存');
+                closeConfig();
+                // Auto-discover models
+                discoverModels();
+            } else {
+                const err = await resp.json();
+                showToast('保存失败: ' + (err.error || ''));
+            }
+        };
+
+        window.saveCustomConfig = async () => {
             const data = {
                 api_base: document.getElementById('cfgApiBase').value.trim(),
                 model: document.getElementById('cfgModel').value.trim(),
             };
             const key = document.getElementById('cfgApiKey').value.trim();
             if (key) data.api_key = key;
-            const resp = await fetch('/api/ai/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-            if (resp.ok) { closeConfig(); showToast('设置已保存'); }
+            const resp = await fetch('/api/ai/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            if (resp.ok) {
+                closeConfig();
+                showToast('设置已保存');
+                loadModelList();
+            } else {
+                const err = await resp.json();
+                showToast('保存失败: ' + (err.error || ''));
+            }
+        };
+
+        window.discoverModels = async () => {
+            const btn = document.getElementById('btnDiscover');
+            const status = document.getElementById('discoverStatus');
+            btn.disabled = true;
+            btn.textContent = '⏳ 发现中...';
+            status.style.display = 'block';
+            status.textContent = '正在查询可用模型...';
+
+            try {
+                const resp = await fetch('/api/ai/models/discover', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider_id: 'openrouter'})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    status.textContent = '❌ ' + data.error;
+                } else {
+                    status.textContent = `✅ 发现 ${data.models.length} 个可用模型`;
+                    loadModelList();
+                }
+            } catch(e) {
+                status.textContent = '❌ 网络错误: ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔍 发现可用模型';
+            }
         };
 
         // === Contacts ===
@@ -629,6 +842,7 @@
                     messages: chatHistory.slice(0, -1).map(m => ({role: m.role, content: m.content})),
                     user_message: text,
                     thinking: document.getElementById('thinkingToggle').checked,
+                    model: document.getElementById('modelSelect').value || '',
                 };
                 // Send all selected contacts as context
                 if (selectedContacts.length > 0) {

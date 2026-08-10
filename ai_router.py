@@ -274,12 +274,14 @@ class ModelRouter:
             for model in provider.models:
                 model_id = model if isinstance(model, str) else model.get("id", "")
                 model_name = model if isinstance(model, str) else model.get("name", model_id)
+                is_free = model.get("free", False) if isinstance(model, dict) else False
                 models.append({
                     "id": model_id,
                     "name": model_name,
                     "provider": provider.id,
                     "provider_name": provider.name,
                     "capabilities": provider.capabilities,
+                    "free": is_free,
                 })
         return models
 
@@ -384,6 +386,11 @@ class ModelRouter:
                     model_info["input_modalities"] = arch.get("input_modalities", ["text"])
                     model_info["pricing_prompt"] = pricing.get("prompt", "0")
                     model_info["pricing_completion"] = pricing.get("completion", "0")
+                    # Mark as free if both prompt and completion pricing are "0"
+                    model_info["free"] = (
+                        pricing.get("prompt", "0") == "0" and
+                        pricing.get("completion", "0") == "0"
+                    )
                 discovered.append(model_info)
 
             # Update provider's model list

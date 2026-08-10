@@ -975,17 +975,25 @@
                 const sel = document.getElementById('scraperModelSelect');
                 if (data.models && data.models.length > 0) {
                     sel.innerHTML = '<option value="">默认模型</option>';
-                    // Group by provider
-                    const groups = {};
+                    // Separate OpenRouter free/paid, keep others as-is
+                    const openrouterFree = [];
+                    const openrouterPaid = [];
+                    const otherGroups = {};
                     data.models.forEach(m => {
-                        const key = m.provider_name || m.provider || 'Other';
-                        if (!groups[key]) groups[key] = [];
-                        groups[key].push(m);
+                        if (m.provider === 'openrouter') {
+                            if (m.free) openrouterFree.push(m);
+                            else openrouterPaid.push(m);
+                        } else {
+                            const key = m.provider_name || m.provider || 'Other';
+                            if (!otherGroups[key]) otherGroups[key] = [];
+                            otherGroups[key].push(m);
+                        }
                     });
-                    for (const [providerName, models] of Object.entries(groups)) {
+                    function addGroup(label, items) {
+                        if (!items.length) return;
                         const optgroup = document.createElement('optgroup');
-                        optgroup.label = providerName;
-                        models.forEach(m => {
+                        optgroup.label = label;
+                        items.forEach(m => {
                             const opt = document.createElement('option');
                             opt.value = m.id;
                             opt.textContent = m.name || m.id;
@@ -993,6 +1001,11 @@
                         });
                         sel.appendChild(optgroup);
                     }
+                    for (const [name, models] of Object.entries(otherGroups)) {
+                        addGroup(name, models);
+                    }
+                    addGroup(`OpenRouter (免费 · ${openrouterFree.length})`, openrouterFree);
+                    addGroup(`OpenRouter (付费 · ${openrouterPaid.length})`, openrouterPaid);
                     // Restore last selection
                     const saved = localStorage.getItem('ai_active_model');
                     if (saved) sel.value = saved;

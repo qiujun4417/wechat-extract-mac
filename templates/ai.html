@@ -542,32 +542,52 @@
             const sel = document.getElementById('modelSelect');
             sel.innerHTML = '';
 
-            // Group by provider
-            const groups = {};
+            // Separate OpenRouter models into free/paid, keep other providers as-is
+            const openrouterFree = [];
+            const openrouterPaid = [];
+            const otherGroups = {};
+
             models.forEach(m => {
-                const key = m.provider_name || m.provider || 'Other';
-                if (!groups[key]) groups[key] = [];
-                groups[key].push(m);
+                if (m.provider === 'openrouter') {
+                    if (m.free) {
+                        openrouterFree.push(m);
+                    } else {
+                        openrouterPaid.push(m);
+                    }
+                } else {
+                    const key = m.provider_name || m.provider || 'Other';
+                    if (!otherGroups[key]) otherGroups[key] = [];
+                    otherGroups[key].push(m);
+                }
             });
 
-            for (const [providerName, providerModels] of Object.entries(groups)) {
+            function addGroup(label, items) {
+                if (!items.length) return;
                 const optgroup = document.createElement('optgroup');
-                optgroup.label = providerName;
-                providerModels.forEach(m => {
+                optgroup.label = label;
+                items.forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.id;
-                    // Add capability indicators
-                    let label = m.name || m.id;
+                    let name = m.name || m.id;
                     if (m.capabilities) {
-                        if (m.capabilities.thinking) label += ' 🧠';
-                        if (m.capabilities.vision) label += ' 👁';
+                        if (m.capabilities.thinking) name += ' 🧠';
+                        if (m.capabilities.vision) name += ' 👁';
                     }
-                    opt.textContent = label;
+                    opt.textContent = name;
                     if (m.id === activeModel) opt.selected = true;
                     optgroup.appendChild(opt);
                 });
                 sel.appendChild(optgroup);
             }
+
+            // Other providers first (direct connect)
+            for (const [providerName, providerModels] of Object.entries(otherGroups)) {
+                addGroup(providerName, providerModels);
+            }
+            // OpenRouter free models
+            addGroup(`OpenRouter (免费 · ${openrouterFree.length})`, openrouterFree);
+            // OpenRouter paid models
+            addGroup(`OpenRouter (付费 · ${openrouterPaid.length})`, openrouterPaid);
 
             // If no active match, select first
             if (!activeModel && sel.options.length > 0) {

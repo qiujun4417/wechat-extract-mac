@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-10 (v3.1)
+
+- **全局 AI 设置** — 新增 `static/ai-settings.js` 共享组件，所有页面（首页、AI、公众号分析）均可通过右上角按钮配置 AI
+- **免费模型健康检查** — 后台线程每 5 分钟自动测试免费模型可用性
+  - 模型下拉显示实时状态图标（可用/较慢/不可用）
+  - 可用模型自动排序到前面，附带响应延迟
+  - 新增 `GET /api/ai/models/status` 端点查看健康状态
+- **模型分组优化** — OpenRouter 模型按免费/付费分组展示，显示可用数量
+- **错误码体系** — 新增 `AIError` 异常类 + 16 个中文错误码，所有 API 错误返回 `{error, error_code}`
+- **修复：聊天预览失效** — `eventSource` 变量声明顺序导致 TDZ 错误，所有 JS 事件监听器未注册
+- **修复：OpenRouter Key 保存失败** — `saveOpenrouterConfig` 改用 `add_provider`（兼容 provider 不存在的情况）
+
 ## 2026-08-10 (v3)
 
 - **多模型路由器** — 新增 `ai_router.py` 模块，支持多 Provider 配置和动态模型切换

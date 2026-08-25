@@ -347,10 +347,21 @@
                 <input type="checkbox" id="thinkingToggle" checked> 🧠 深度思考
             </label>
         </div>
+        <div class="thinking-toggle" title="工具调用模式：让 AI 主动查询聊天数据">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text-dim);">
+                <input type="checkbox" id="useToolsToggle" checked> 🛠️ 工具调用
+            </label>
+        </div>
+        <div class="thinking-toggle" title="执行前生成可见计划，适合复杂多步骤任务">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text-dim);">
+                <input type="checkbox" id="usePlanToggle"> 📋 计划模式
+            </label>
+        </div>
         <select class="model-select" id="modelSelect" onchange="onModelChange(this.value)" title="选择模型">
             <option value="">加载中...</option>
         </select>
         <button class="config-btn" onclick="openConfig()">⚙️ 设置</button>
+        <a href="/agent" class="config-btn" style="text-decoration:none;" title="Agent 控制台">🤖 Agent</a>
         <button class="config-btn" id="themeToggle" onclick="toggleTheme()" title="切换主题">🌙</button>
     </div>
 
@@ -393,6 +404,7 @@
             <div class="settings-tabs">
                 <button class="settings-tab active" onclick="switchSettingsTab('openrouter')">OpenRouter (推荐)</button>
                 <button class="settings-tab" onclick="switchSettingsTab('custom')">自定义接口</button>
+                <button class="settings-tab" onclick="switchSettingsTab('memory')">🧠 记忆</button>
             </div>
             <!-- OpenRouter Tab -->
             <div class="settings-panel active" id="panelOpenrouter">
@@ -427,6 +439,29 @@
                     <button class="btn btn-ghost" onclick="closeConfig()">取消</button>
                     <button class="btn btn-primary" onclick="saveCustomConfig()">保存</button>
                 </div>
+            </div>
+            <!-- Memory Tab -->
+            <div class="settings-panel" id="panelMemory">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <div style="font-size:13px;color:var(--text-dim);">AI 在历次对话中积累的关键信息，每次对话开始时自动注入</div>
+                    <button class="btn btn-ghost" style="font-size:12px;color:#f38ba8;" onclick="clearAllMemory()">🗑️ 清空全部</button>
+                </div>
+                <div id="memoryList" style="max-height:320px;overflow-y:auto;">
+                    <div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tool Approval Modal -->
+    <div class="modal-overlay" id="toolApprovalModal">
+        <div class="modal" style="max-width:420px">
+            <h2>🔐 工具执行确认</h2>
+            <div style="margin-bottom:16px;font-size:13px;color:var(--text-dim);">AI 正在请求执行以下操作：</div>
+            <div id="toolApprovalContent" style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:16px;font-family:monospace;font-size:12px;"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="btn btn-ghost" onclick="resolveToolApproval(false)" style="color:#f38ba8;border-color:#f38ba8;">✗ 拒绝</button>
+                <button class="btn btn-primary" onclick="resolveToolApproval(true)">✓ 批准</button>
             </div>
         </div>
     </div>
@@ -630,10 +665,74 @@
             if (tab === 'openrouter') {
                 document.querySelectorAll('.settings-tab')[0].classList.add('active');
                 document.getElementById('panelOpenrouter').classList.add('active');
-            } else {
+            } else if (tab === 'custom') {
                 document.querySelectorAll('.settings-tab')[1].classList.add('active');
                 document.getElementById('panelCustom').classList.add('active');
+            } else if (tab === 'memory') {
+                document.querySelectorAll('.settings-tab')[2].classList.add('active');
+                document.getElementById('panelMemory').classList.add('active');
+                loadMemoryList();
             }
+        };
+
+        async function loadMemoryList() {
+            const container = document.getElementById('memoryList');
+            try {
+                const resp = await fetch('/api/ai/memory');
+                const data = await resp.json();
+                const entries = Object.entries(data);
+                if (entries.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无记忆记录</div>';
+                    return;
+                }
+                let html = '';
+                for (const [username, memories] of entries) {
+                    const contact = contacts.find(c => c.username === username);
+                    const displayName = contact ? (contact.display_name || username) : username;
+                    html += `<div style="margin-bottom:14px;padding:10px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-weight:600;font-size:13px;">${esc(displayName)}</span>
+                            <button onclick="clearContactMemory('${esc(username)}')" style="font-size:11px;color:#f38ba8;background:none;border:none;cursor:pointer;padding:2px 6px;">🗑️ 清除</button>
+                        </div>`;
+                    for (const m of memories) {
+                        const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleDateString('zh-CN') : '';
+                        html += `<div style="font-size:12px;color:var(--text-dim);padding:4px 0;border-top:1px solid var(--border);opacity:0.85;">
+                            <span style="opacity:0.6;margin-right:6px;">${date}</span>${esc(m.summary)}
+                        </div>`;
+                    }
+                    html += `</div>`;
+                }
+                container.innerHTML = html;
+            } catch(e) {
+                container.innerHTML = '<div style="color:#f38ba8;padding:10px;">加载失败</div>';
+            }
+        }
+
+        window.clearContactMemory = async (username) => {
+            await fetch('/api/ai/memory', {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username})
+            });
+            loadMemoryList();
+        };
+
+        window.clearAllMemory = async () => {
+            if (!confirm('确定清空所有 AI 记忆？')) return;
+            await fetch('/api/ai/memory', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: '{}'});
+            loadMemoryList();
+        };
+
+        window.resolveToolApproval = async (approved) => {
+            document.getElementById('toolApprovalModal').classList.remove('show');
+            const id = window._pendingApprovalId;
+            if (!id) return;
+            window._pendingApprovalId = null;
+            await fetch('/api/ai/tool_approval', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id, approved}),
+            });
         };
 
         window.openConfig = () => document.getElementById('configModal').classList.add('show');
@@ -883,6 +982,8 @@
                     messages: chatHistory.slice(0, -1).map(m => ({role: m.role, content: m.content})),
                     user_message: text,
                     thinking: document.getElementById('thinkingToggle').checked,
+                    use_tools: document.getElementById('useToolsToggle').checked,
+                    use_plan: document.getElementById('usePlanToggle').checked,
                     model: document.getElementById('modelSelect').value || '',
                 };
                 // Send all selected contacts as context
@@ -945,6 +1046,33 @@
                                 chatHistory[chatHistory.length-1].content += `\n\n❌ Error: ${data.error}`;
                                 renderChat(false);
                             }
+                            if (data.tool_call) {
+                                const lastMsg = chatHistory[chatHistory.length-1];
+                                if (!lastMsg._tool_events) lastMsg._tool_events = [];
+                                lastMsg._tool_events.push({type: 'call', name: data.tool_call.name, args: data.tool_call.args});
+                                renderChat(false);
+                            }
+                            if (data.tool_result) {
+                                const lastMsg = chatHistory[chatHistory.length-1];
+                                if (!lastMsg._tool_events) lastMsg._tool_events = [];
+                                // Cap result display to avoid huge renders
+                                const resultStr = typeof data.tool_result.result === 'string'
+                                    ? data.tool_result.result.slice(0, 500)
+                                    : JSON.stringify(data.tool_result.result).slice(0, 500);
+                                lastMsg._tool_events.push({type: 'result', name: data.tool_result.name, result: resultStr});
+                                renderChat(false);
+                            }
+                            if (data.plan_start) {
+                                const lastMsg = chatHistory[chatHistory.length-1];
+                                lastMsg._plan = {steps: data.plan_start.steps, current: 0};
+                                renderChat(false);
+                            }
+                            if (data.tool_approval_needed) {
+                                window._pendingApprovalId = data.tool_approval_needed.id;
+                                const content = document.getElementById('toolApprovalContent');
+                                content.textContent = `工具: ${data.tool_approval_needed.name}\n参数: ${JSON.stringify(data.tool_approval_needed.args, null, 2)}`;
+                                document.getElementById('toolApprovalModal').classList.add('show');
+                            }
                         } catch(e) {}
                     }
                 }
@@ -996,6 +1124,46 @@
                         html += `<div class="msg-row ai"><div class="msg-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
                     } else {
                         let bubbleHtml = '';
+                        // Show execution plan steps
+                        if (msg._plan && msg._plan.steps && msg._plan.steps.length > 0) {
+                            const toolCallCount = (msg._tool_events || []).filter(e => e.type === 'call').length;
+                            const isDone = !!content;
+                            bubbleHtml += `<details ${!isDone ? 'open' : ''} style="margin-bottom:8px;font-size:12px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">
+                                <summary style="cursor:pointer;user-select:none;">📋 执行计划 <span style="opacity:0.6">${isDone ? '已完成' : `执行中 (${toolCallCount} 步)`}</span></summary>
+                                <ol style="margin:6px 0 0 16px;">`;
+                            msg._plan.steps.forEach((step, idx) => {
+                                const done = isDone || idx < toolCallCount;
+                                bubbleHtml += `<li style="margin-bottom:3px;${done ? 'opacity:0.5;text-decoration:line-through;' : ''}">${esc(step)}</li>`;
+                            });
+                            bubbleHtml += `</ol></details>`;
+                        }
+                        // Show tool call activity
+                        const toolEvents = msg._tool_events || [];
+                        if (toolEvents.length > 0) {
+                            const callCount = toolEvents.filter(e => e.type === 'call').length;
+                            const isActive = isLast && !content;
+                            const toolNames = [...new Set(toolEvents.filter(e => e.type === 'call').map(e => e.name))];
+                            const toolLabel = {
+                                'search_messages': '🔍 搜索消息',
+                                'get_messages_in_timerange': '📅 查询时间段',
+                                'get_contact_stats': '📊 获取统计',
+                                'get_contacts_list': '👥 获取联系人',
+                                'fetch_article_full': '📄 获取文章',
+                            };
+                            const toolDisplays = toolNames.map(n => toolLabel[n] || n).join('、');
+                            bubbleHtml += `<details style="margin-bottom:8px;font-size:12px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 10px;">
+                                <summary style="cursor:pointer;user-select:none;">🛠️ ${isActive ? '正在调用工具...' : `已调用 ${callCount} 次工具`} <span style="opacity:0.6">${toolDisplays}</span></summary>
+                                <div style="margin-top:6px;font-family:monospace;font-size:11px;max-height:180px;overflow-y:auto;">`;
+                            for (const ev of toolEvents) {
+                                if (ev.type === 'call') {
+                                    const argsStr = JSON.stringify(ev.args, null, 2);
+                                    bubbleHtml += `<div style="margin-bottom:4px;"><span style="color:#7ec8e3;">▶ ${esc(ev.name)}</span><pre style="margin:2px 0 6px 12px;white-space:pre-wrap;opacity:0.7;">${esc(argsStr)}</pre></div>`;
+                                } else {
+                                    bubbleHtml += `<div style="margin-bottom:6px;"><span style="color:#7ec87e;">✓ 结果</span><pre style="margin:2px 0 6px 12px;white-space:pre-wrap;opacity:0.6;">${esc(ev.result || '')}</pre></div>`;
+                                }
+                            }
+                            bubbleHtml += `</div></details>`;
+                        }
                         // Show thinking in a collapsible section
                         if (thinking) {
                             const thinkingPreview = thinking.length > 100 ? thinking.slice(0, 100) + '...' : thinking;
@@ -1470,6 +1638,28 @@
                 if (!resp.ok) { currentSessionId = null; localStorage.removeItem('ai_session_id'); return; }
                 const data = await resp.json();
                 chatHistory = data.messages || [];
+                // Re-attach persisted tool events to their messages
+                if (data.events && data.events.length > 0) {
+                    data.events.forEach(ev => {
+                        const idx = ev.message_index;
+                        if (idx >= 0 && idx < chatHistory.length) {
+                            if (!chatHistory[idx]._tool_events) chatHistory[idx]._tool_events = [];
+                            const {message_index, ...evData} = ev;
+                            chatHistory[idx]._tool_events.push(evData);
+                        }
+                    });
+                }
+                // Re-attach persisted tool events back onto chatHistory entries
+                if (data.events && data.events.length > 0) {
+                    data.events.forEach(ev => {
+                        const idx = ev.message_index;
+                        if (idx !== undefined && chatHistory[idx]) {
+                            if (!chatHistory[idx]._tool_events) chatHistory[idx]._tool_events = [];
+                            const {message_index: _, ...evData} = ev;
+                            chatHistory[idx]._tool_events.push(evData);
+                        }
+                    });
+                }
                 // Restore selected contacts
                 if (data.contacts && data.contacts.length > 0) {
                     await contactsLoaded;
@@ -1546,6 +1736,9 @@
                     messages: chatHistory,
                     contacts: selectedContacts.map(c => c.username),
                     title: title,
+                    events: chatHistory.flatMap((msg, idx) =>
+                        (msg._tool_events || []).map(e => ({...e, message_index: idx}))
+                    ),
                 })
             });
             // Refresh session list

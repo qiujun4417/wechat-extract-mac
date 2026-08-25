@@ -17,7 +17,9 @@
                 <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
                     <a href="/ai" id="aiBtn" onclick="return goAI()" style="padding:6px 14px;background:#5b6abf;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">🤖 AI 分析</a>
                     <a href="/scraper" style="padding:6px 14px;background:#6b4f2a;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">📰 公众号分析</a>
+                    <a href="/agent" style="padding:6px 14px;background:#2a4a6a;color:#fff;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">⚡ Agent</a>
                     <button onclick="syncMessages()" id="syncBtn" style="padding:6px 14px;background:#2a6a2a;color:#fff;border-radius:6px;font-size:13px;border:none;cursor:pointer;font-weight:500;" title="后台每10秒自动同步，也可点击手动触发">🔄 同步</button>
+                    <button onclick="generateSummaries()" id="summaryBtn" style="padding:6px 14px;background:#4a3a6a;color:#fff;border-radius:6px;font-size:13px;border:none;cursor:pointer;font-weight:500;" title="用 AI 为联系人生成一句话描述">✨ 生成摘要</button>
                     <button onclick="openAISettings()" style="padding:6px 14px;background:var(--bg-darker);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;">⚙️ AI 设置</button>
                     <button id="themeToggle" onclick="toggleTheme()" style="padding:6px 10px;background:var(--bg-darker);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;" title="切换主题">🌙</button>
                 </div>
@@ -96,6 +98,31 @@
     let isSyncing = false;
     let autoSyncTimer = null;
 
+    async function generateSummaries() {
+        const btn = document.getElementById('summaryBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ 生成中...';
+        try {
+            const resp = await fetch('/api/contacts/summaries', { method: 'POST' });
+            const data = await resp.json();
+            if (data.error) {
+                alert('生成失败：' + data.error);
+            } else {
+                btn.textContent = '✨ 生成摘要';
+                // Show toast if available, otherwise alert
+                const msg = data.message || `已安排摘要生成`;
+                if (window.showToast) showToast(msg);
+                // Reload contacts after a short delay to pick up any already-cached summaries
+                setTimeout(() => { if (window.dispatchEvent) window.dispatchEvent(new CustomEvent('contacts-refreshed')); }, 2000);
+            }
+        } catch(e) {
+            alert('请求失败：' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '✨ 生成摘要';
+        }
+    }
+
     function syncMessages(silent, auto) {
         if (isSyncing) return;
         isSyncing = true;
@@ -168,6 +195,37 @@
                 syncMessages(true, true); // silent + use auto endpoint
             }
         }, 10000);
+    }
+
+    async function generateSummaries() {
+        const btn = document.getElementById('summaryBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ 生成中...';
+        try {
+            const resp = await fetch('/api/contacts/summaries', {method: 'POST'});
+            const data = await resp.json();
+            if (data.error) {
+                alert('生成摘要失败：' + data.error);
+            } else {
+                btn.textContent = '✅ 已安排';
+                // Reload contacts after a delay to show new summaries
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('contacts-refreshed'));
+                    btn.textContent = '✨ 生成摘要';
+                    btn.disabled = false;
+                }, 3000);
+                const msg = document.createElement('div');
+                msg.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#4a3a6a;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:9999;';
+                msg.textContent = data.message || '摘要生成中，完成后自动更新';
+                document.body.appendChild(msg);
+                setTimeout(() => msg.remove(), 4000);
+                return;
+            }
+        } catch(e) {
+            alert('请求失败：' + e.message);
+        }
+        btn.textContent = '✨ 生成摘要';
+        btn.disabled = false;
     }
 
     // Start auto-sync after page loads

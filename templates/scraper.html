@@ -682,6 +682,10 @@
                                 <select id="scraperModelSelect" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-color);font-size:12px;max-width:200px;" title="选择模型">
                                     <option value="">默认模型</option>
                                 </select>
+                                <select id="analyzeModeSelect" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-color);font-size:12px;" title="分析模式：标准=直接注入所有文章；智能体=AI按需拉取文章">
+                                    <option value="standard">📄 标准模式</option>
+                                    <option value="agent">🤖 智能体模式</option>
+                                </select>
                             </div>
                             <textarea id="promptInput">给你这些公众号文章，按照时间排序，使用最先进的可视化分析方式帮我分析这些文章，然后以 html 可视化的方式输出。要求输出完整的独立 HTML 文件，包含 CSS 样式和必要的 JavaScript（可以使用 ECharts 或 Chart.js），确保可以直接在浏览器中打开查看。</textarea>
                         </div>
@@ -1450,12 +1454,14 @@
                     prompt: prompt,
                     messages: conversationMessages,
                     model: document.getElementById('scraperModelSelect').value || '',
+                    mode: document.getElementById('analyzeModeSelect').value || 'standard',
                 };
             } else {
                 requestBody = {
                     job_id: currentJobId,
                     prompt: prompt,
                     model: document.getElementById('scraperModelSelect').value || '',
+                    mode: document.getElementById('analyzeModeSelect').value || 'standard',
                 };
             }
 

@@ -354,6 +354,18 @@ body {
     color: var(--badge-official-text);
 }
 
+.contact-ai-summary {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-dim, var(--text-secondary));
+    opacity: 0.75;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+    font-style: italic;
+}
+
 .contact-count {
     background: var(--bg-darker);
     color: var(--text-secondary);

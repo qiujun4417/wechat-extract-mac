@@ -1,8 +1,14 @@
 # WeChat Mac Chat History Exporter
 
-一个完整的 macOS 微信聊天记录导出与 AI 分析工具。
+> [中文](#中文文档) | [English](#english-documentation)
 
-## 功能概览
+---
+
+## 中文文档
+
+一个完整的 macOS 微信聊天记录导出与 AI 智能 Agent 分析工具。
+
+### 功能概览
 
 | 功能 | 说明 |
 |------|------|
@@ -12,57 +18,60 @@
 | 🔄 增量同步 | 一键拉取最新消息（含 WAL 解密支持） |
 | 📦 批量导出 | 支持 HTML / TXT / CSV 格式 |
 | 🤖 AI 分析 | 集成 OpenRouter 400+ 模型，支持多模态、思考模式、Session 持久化 |
+| ⚡ Agent Harness | 工具调用循环、计划执行、定时任务、自定义工具、MCP 集成 |
 | 🖼️ 图片展示 | 2025 年及之前的图片可直接显示 |
 | 🔗 链接跳转 | 公众号文章和新闻链接可直接点击 |
 
-## 技术架构
+### 技术架构
 
 ```
 wechat-extract-mac/
-├── app.py                 # Flask 主应用 (端口 9527)
-├── ai_router.py           # AI 多模型路由器 (OpenRouter + 直连 Provider)
-├── decrypt_core.py        # 解密引擎 (从 wcdb-key-tool 集成)
-├── scraper.py             # 公众号文章爬虫模块
-├── config/                # 运行时配置与数据 (.gitignore)
-│   ├── ai_config.json     # AI API 配置 (多 Provider)
-│   ├── ai_sessions.json   # AI 对话会话持久化
-│   ├── all_keys.json      # 数据库解密密钥缓存
-│   ├── contacts_cache.json# 联系人/公众号列表缓存
-│   └── scraper_sessions.json # 公众号分析会话
-├── decrypted/             # 解密后的数据库文件 (.gitignore)
-├── scraped_articles/      # 爬取的文章内容 (.gitignore)
-├── tests/                 # 单元测试
-│   ├── test_ai_router.py  # AI 路由器测试 (42 tests)
-│   ├── test_scraper.py    # 爬虫模块测试
-│   └── test_pdf_export.py # PDF 导出功能测试
+├── app.py                  # Flask 主应用 (端口 9527)
+├── ai_router.py            # AI 多模型路由器 (OpenRouter + 直连 Provider)
+├── ai_agent.py             # Agent 核心：ToolRegistry + run_agent_loop + run_plan_and_execute_loop
+├── ai_memory.py            # 跨会话记忆：insights 提炼 + 自动注入
+├── ai_summary.py           # 联系人智能摘要（后台批量生成）
+├── ai_scheduler.py         # 定时 Agent 任务调度器
+├── ai_custom_tools.py      # 用户自定义工具（prompt 模板驱动）
+├── ai_semantic.py          # 语义向量搜索（可选，需 chromadb）
+├── mcp_server.py           # MCP stdio server（供 Claude Desktop/Code 调用）
+├── decrypt_core.py         # 解密引擎
+├── scraper.py              # 公众号文章爬虫
+├── config/                 # 运行时配置与数据（.gitignore）
+│   ├── ai_config.json
+│   ├── ai_sessions.json
+│   ├── ai_memory.json
+│   ├── scheduled_tasks.json
+│   ├── custom_tools.json
+│   └── contacts_cache.json
 ├── templates/
-│   ├── index.html         # 导出主页面
-│   ├── setup.html         # 引导/解密页面
-│   ├── ai.html            # AI 分析页面
-│   └── scraper.html       # 公众号文章分析页面
-└── static/
-    ├── style.css          # 全局样式 (支持 dark/light)
-    ├── app.js             # 前端逻辑
-    └── theme.js           # 主题切换模块
+│   ├── index.html          # 导出主页面
+│   ├── ai.html             # AI 分析页面
+│   ├── agent.html          # Agent 控制台
+│   └── scraper.html        # 公众号分析页面
+└── tests/
+    ├── test_ai_router.py   # 42 tests
+    ├── test_agent_harness.py # 67 tests
+    └── test_scraper.py
 ```
 
-## 快速开始
+### 快速开始
 
-### 前置条件
+**前置条件**
 
 - macOS (Apple Silicon / Intel)
 - Python 3.10+
 - WeChat Mac 4.x 已安装并登录
 - [uv](https://docs.astral.sh/uv/) 已安装
 
-### 启动
+**启动**
 
 ```bash
 cd wechat-extract-mac
 ./run.sh
 ```
 
-或者手动通过 uv 启动：
+或手动启动：
 
 ```bash
 uv sync
@@ -73,211 +82,307 @@ sudo $(uv run python -c "import sys; print(sys.executable)") app.py
 
 > ⚠️ 需要 `sudo` 权限用于：重签名微信、LLDB 密钥捕获、解密数据库
 
-### 没有 uv 怎么办
+**首次使用流程（全部在网页完成）**
 
-项目也保留了 `requirements.txt`，可以直接用 pip 安装依赖：
-
-```bash
-pip3 install -r requirements.txt
-sudo python3 app.py
-```
-
-### 用 uv 生成 / 更新 requirements.txt
-
-```bash
-uv export --no-dev --no-hashes -o requirements.txt
-```
-
-### 首次使用流程（全部在网页完成）
-
-1. **重签名微信** — 页面点击按钮或终端执行 `sudo codesign --force --deep --sign - /Applications/WeChat.app`
+1. **重签名微信** — 页面点击按钮
 2. **重启微信** — 完全退出 (Cmd+Q) 再重新打开
-3. **捕获密钥** — 点击页面按钮，按提示在微信中退出登录再重新登录
+3. **捕获密钥** — 点击按钮，在微信中退出登录再重新登录
 4. **解密数据库** — 点击按钮，等待进度完成后自动跳转
 
-### 同步新消息
+### Agent Harness
 
-1. **退出微信** (Cmd+Q) — 让 WAL 数据合并到主数据库
-2. **重新打开微信**
-3. 在网页上点击 **「🔄 同步新消息」**
+v4.0 引入完整 Agent 能力，让 AI 从被动问答变为主动智能 Agent。
 
-> 💡 微信使用 SQLite WAL 模式，最新消息先写入 .db-wal 文件。退出微信时 WAL 会自动合并。
-> 本工具同时支持解密 WAL 文件，尽可能获取最新数据。
+**对话中的工具调用**
 
-## 功能详解
+在 AI 分析页面选择联系人后，启用「🛠️ 工具调用」，AI 可主动调用：
+- `search_messages` — 全文搜索聊天记录
+- `get_messages_in_timerange` — 按时间段查询
+- `get_contact_stats` — 统计消息数量
+- `get_contacts_list` — 获取联系人列表
+- `semantic_search` — 语义搜索（需安装 chromadb）
 
-### 聊天浏览
+**计划模式**
 
-- **消息左右分开**：自己发的绿色靠右，对方白色靠左
-- **显示发送者昵称**：使用备注名（非微信 ID），群聊中正确区分每个成员
-- **头像显示**：对方消息左侧显示头像
-- **跨数据库加载**：微信按时间分片存储（message_0~N.db），本工具自动合并所有分片
-- **无限滚动**：往上滚动自动加载更老的消息
-- **链接可点击**：公众号文章、新闻链接直接跳转
-- **新闻聚合**：腾讯新闻等 mmreader 格式正确解析为多条链接
+启用「📋 计划模式」，AI 在执行前先生成可见的步骤计划，逐步执行更透明。
 
-### 联系人列表
+**定时任务（Agent 控制台 `/agent`）**
 
-- 按最近活跃时间排序
-- 显示消息总数（跨所有数据库分片累计）
-- 标签区分：**Group**（群聊）/ **公众号**（gh_ 开头的官方账号）
-- 支持搜索过滤
+```
+每天 08:00 → 汇总昨日聊天要点
+每次同步后 → 分析新增消息
+每周一 → 生成本周关系报告
+```
 
-### 导出格式
+**MCP 集成**
 
-- **HTML** — 微信风格聊天气泡，可在浏览器直接打开
-- **TXT** — 纯文本，方便阅读和全文搜索
-- **CSV** — 电子表格格式，方便数据分析
+```bash
+python mcp_server.py
+```
 
-多选联系人后批量导出为 ZIP 包。
+在 Claude Desktop / Claude Code 中配置：
 
-### AI 分析
+```json
+{
+  "mcpServers": {
+    "wechat": {
+      "command": "python",
+      "args": ["/path/to/wechat-extract-mac/mcp_server.py"]
+    }
+  }
+}
+```
 
-#### 配置
+**语义搜索（可选）**
 
-> 📖 详细配置指南请参考 **[AI 配置文档](docs/AI_CONFIG.md)**
+```bash
+# 需要 Python 3.11+
+pip install "wechat-extract-mac[semantic]"
+# 或
+pip install chromadb
+```
 
-右上角 ⚙️ 按钮设置，支持两种模式：
+启用后在 Agent 控制台 → 语义索引 tab 为联系人建立索引。
 
-**方式一：[OpenRouter](https://openrouter.ai)（推荐）** — 一个 Key 访问 400+ 模型（GPT-4o、Claude、DeepSeek、Gemini 等）
+### AI 配置
 
-**方式二：自定义接口（兜底）** — 直接配置 api_base + api_key + model（Kimi、OpenAI、DeepSeek 等）
+右上角 ⚙️ 按钮，支持两种方式：
 
-#### 交互方式
+**方式一：[OpenRouter](https://openrouter.ai)（推荐）** — 一个 Key 访问 400+ 模型
 
-1. **从导出页面进入** — 勾选联系人 → 点击「🤖 AI 分析」→ 自动带入聊天记录
-2. **AI 页面内选择** — 顶部点击选择联系人/群组（支持多选）
-3. **预设快捷提示** — 聊天频率、总结对话、情感分析、生成报告等
+**方式二：自定义接口** — 直接配置 api_base + api_key + model（Kimi、OpenAI、DeepSeek 等）
 
-#### 功能特性
-
-- **流式响应** — SSE 实时显示 AI 回复
-- **深度思考** — 支持 Kimi K3 推理模式，可开关（🧠 深度思考）
-- **中文推理** — 思考过程使用中文展示
-- **多模态** — 支持上传图片（base64 内联）和文件（PDF/Excel/Word）
-- **自动重试** — API 过载时自动重试最多 3 次
-- **Markdown 渲染** — 标题、列表、表格、代码高亮
-- **图表支持** — Mermaid 流程图、ECharts 数据可视化
-- **Session 持久化** — 对话历史保存到文件，刷新/重启不丢失
-- **多 Session** — 可在历史对话间切换，支持新建对话
-
-### 图片支持
-
-| 时间段 | 状态 | 说明 |
-|--------|------|------|
-| 2025 及之前 | ✅ 可显示 | 本地存储为纯 JPEG |
-| 2026 起 | ❌ 加密 | V2 加密格式，暂无公开解密方法 |
-
-### 解密技术原理
-
-WeChat Mac 4.x 使用 SQLCipher 4 加密本地数据库：
-- **加密算法**: AES-256-CBC
-- **页大小**: 4096 bytes
-- **KDF**: PBKDF2-HMAC-SHA512, 256000 迭代
-- **HMAC**: SHA-512, 每页 64 bytes
-- **Reserve**: 80 bytes (16 IV + 64 HMAC)
-
-密钥提取方法：
-1. 对微信 ad-hoc 重签名移除 Hardened Runtime
-2. LLDB 在 `CCKeyDerivationPBKDF` 设断点
-3. 用户退登再重登触发密钥派生
-4. 从 ARM64 寄存器 `$x1` 读取 32 字节 passphrase
-5. passphrase + 每个 DB 的 salt → PBKDF2 派生出 enc_key
-
-WAL 解密：
-- SQLCipher WAL 文件头为明文（标准 SQLite WAL magic `0x377f0682`）
-- 帧头 24 bytes 为明文（含页号）
-- 页数据 4096 bytes 使用与主 DB 相同的密钥加密
-- 解密后创建配套 WAL 文件，SQLite 自动 checkpoint 合并
-
-### 数据库分片
-
-WeChat Mac 按时间将消息分散到多个数据库：
-- `message_0.db` ~ `message_N.db` — 个人/群聊消息
-- `biz_message_0.db` ~ `biz_message_N.db` — 公众号/服务号消息
-
-本工具**动态发现所有分片**（不硬编码数量），跨分片合并消息并按时间排序。
-
-## 端口
-
-默认端口 **9527**（macOS 的 5000 端口被 AirPlay Receiver 占用）。
-
-## 注意事项
-
-- 重签名微信后部分系统权限（录屏等）需重新授权
-- 每次微信自动更新后需重新签名
-- passphrase 首次捕获后会缓存，后续同步无需重新捕获
-- 同步前建议先退出微信再重开，确保 WAL 数据被写入主数据库
-- 微信不会自动同步所有聊天到本地 — 需要打开对应聊天窗口才会写入
-
-## 安全措施
-
-本项目已通过安全审计并修复以下问题：
+### 安全措施
 
 | 措施 | 说明 |
 |------|------|
 | 🔒 敏感文件保护 | `.gitignore` 排除 API Key、Session、密钥等文件 |
-| 🛡️ Debug 关闭 | 生产模式不启用 Werkzeug 调试器（需 `FLASK_DEBUG=1` 显式开启） |
-| 🚫 XSS 防御 | 微信消息中的 title/url 经 HTML 转义后再渲染为链接 |
-| 🌐 SSRF 防御 | AI API Base URL 限制为 HTTPS + 已知 AI 域名白名单 |
-| 📁 路径穿越防御 | 图片路由拒绝含 `..` 或路径分隔符的文件名 |
-| 🔑 文件权限 | 敏感文件权限 `600`（仅所有者可读写） |
-| 📦 上传限制 | 文件上传最大 16MB，防止内存耗尽 |
-| 🏠 本地绑定 | 仅监听 `127.0.0.1`，外部网络无法访问 |
+| 🛡️ Debug 关闭 | 生产模式不启用调试器 |
+| 🚫 XSS 防御 | 消息内容 HTML 转义后渲染 |
+| 🌐 SSRF 防御 | AI API Base URL 限制为 HTTPS + 域名白名单 |
+| 🏠 本地绑定 | 仅监听 `127.0.0.1` |
 
-### AI API 域名白名单
+### Changelog
 
-配置 `api_base` 时仅允许以下域名：
-- `api.moonshot.cn` (Kimi)
-- `api.openai.com` (OpenAI)
-- `api.anthropic.com` (Claude)
-- `api.deepseek.com` (DeepSeek)
-- `api.together.xyz` / `api.groq.com`
-- `dashscope.aliyuncs.com` (阿里通义)
-- `api.siliconflow.cn` / `api.lingyiwanwu.com` / `api.baichuan-ai.com` / `api.minimax.chat` / `api.zhipuai.cn`
+> 📋 完整更新日志：**[CHANGELOG.md](CHANGELOG.md)**
 
-如需添加其他 API 地址，修改 `app.py` 中的 `ALLOWED_HOSTS` 列表。
+- **v4.0 (2026-08-25)** — Agent Harness：工具调用循环、定时任务、MCP 集成、语义搜索
+- **v3.1 (2026-08-10)** — 全局 AI 设置、免费模型健康检查
+- **v3 (2026-08-10)** — 多模型路由器 + OpenRouter 集成
+- **v2 (2026-08-09)** — Dark/Light 主题、PDF 导出优化
 
-### 安全建议
-
-- 如果 API Key 曾被提交到 git，请立即轮换
-- 如需远程访问，建议添加 token 认证或 nginx 反代 + basic auth
-- 定期清理 `config/ai_sessions.json` 中的历史对话数据
-- 开发调试时可用 `FLASK_DEBUG=1 ./run.sh` 启用调试模式
-
-## 依赖
-
-主要依赖声明在 `pyproject.toml`，由 [uv](https://docs.astral.sh/uv/) 管理：
-
-```bash
-uv sync
-```
-
-同时保留 `requirements.txt` 以兼容未安装 uv 的用户：
-
-```bash
-pip3 install -r requirements.txt
-```
-
-- Python 3.10+
-- Flask
-- requests
-- zstandard
-- lldb (随 Xcode Command Line Tools 安装)
-
-## Changelog
-
-> 📋 完整更新日志请查看 **[CHANGELOG.md](CHANGELOG.md)**
-
-**最近更新：**
-- **v3 (2026-08-10)** — 多模型路由器 + OpenRouter 400+ 模型集成
-- **v2 (2026-08-09)** — Dark/Light 主题、PDF 导出优化、公众号文章爬取分析
-
-## License
+### License
 
 仅供个人数据备份使用。请勿用于任何非法用途。
 
-## Credits
+### Credits
 
 - 解密引擎集成自 [wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool)
 - 灵感来自 [WeChatMsg](https://github.com/LC044/WeChatMsg)
+
+---
+
+## English Documentation
+
+A complete macOS WeChat chat history exporter and AI Agent analysis tool.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔓 One-click Decrypt | Web-guided flow, no terminal required |
+| 💬 Chat Viewer | Bubble layout with avatars and nicknames |
+| 📜 Infinite Scroll | Auto-loads history, spans database shards |
+| 🔄 Incremental Sync | One-click sync of new messages (WAL support) |
+| 📦 Bulk Export | HTML / TXT / CSV formats |
+| 🤖 AI Analysis | OpenRouter 400+ models, multimodal, thinking mode, session persistence |
+| ⚡ Agent Harness | Tool-calling loop, plan-execute, scheduled tasks, custom tools, MCP |
+| 🖼️ Image Display | Images from 2025 and earlier render inline |
+| 🔗 Link Navigation | Article and news links are clickable |
+
+### Architecture
+
+```
+wechat-extract-mac/
+├── app.py                  # Flask app (port 9527)
+├── ai_router.py            # Multi-provider AI router (OpenRouter + direct)
+├── ai_agent.py             # Agent core: ToolRegistry + run_agent_loop + plan-execute
+├── ai_memory.py            # Cross-session memory: extract insights + inject into prompts
+├── ai_summary.py           # Contact intelligence summaries (background generation)
+├── ai_scheduler.py         # Scheduled agent task engine
+├── ai_custom_tools.py      # User-defined tools via prompt templates
+├── ai_semantic.py          # Semantic vector search (optional, requires chromadb)
+├── mcp_server.py           # MCP stdio server for Claude Desktop/Code
+├── decrypt_core.py         # Decryption engine
+├── scraper.py              # WeChat Official Account article crawler
+├── config/                 # Runtime config & data (.gitignored)
+├── templates/
+│   ├── index.html          # Export page
+│   ├── ai.html             # AI chat analysis page
+│   ├── agent.html          # Agent dashboard
+│   └── scraper.html        # Article analysis page
+└── tests/                  # 109 tests total
+```
+
+### Quick Start
+
+**Prerequisites**
+
+- macOS (Apple Silicon or Intel)
+- Python 3.10+
+- WeChat Mac 4.x installed and logged in
+- [uv](https://docs.astral.sh/uv/) installed
+
+**Run**
+
+```bash
+cd wechat-extract-mac
+./run.sh
+```
+
+Or manually:
+
+```bash
+uv sync
+sudo $(uv run python -c "import sys; print(sys.executable)") app.py
+```
+
+Open your browser at **http://127.0.0.1:9527**
+
+> ⚠️ `sudo` is required for: re-signing WeChat, LLDB key capture, database decryption
+
+**First-time Setup (all in the browser)**
+
+1. **Re-sign WeChat** — click the button on the setup page
+2. **Restart WeChat** — fully quit (Cmd+Q) then reopen
+3. **Capture key** — click the button, then log out and back in to WeChat
+4. **Decrypt databases** — click the button and wait
+
+### Agent Harness
+
+v4.0 introduces a full agent harness inspired by DeepSeek Harness (dsh), turning AI from passive Q&A into an active data agent.
+
+**Tool-Calling in Chat**
+
+Select a contact in the AI page, enable "🛠️ Tool Calls" — the AI can now actively call:
+- `search_messages` — full-text search across chat history
+- `get_messages_in_timerange` — query by time range
+- `get_contact_stats` — message count statistics
+- `get_contacts_list` — list contacts with filtering
+- `semantic_search` — semantic similarity search (requires chromadb)
+
+**Plan-and-Execute Mode**
+
+Enable "📋 Plan Mode" — the AI generates a visible numbered plan before executing, making multi-step reasoning transparent.
+
+**Scheduled Tasks (Agent Dashboard `/agent`)**
+
+```
+daily@08:00   → Summarize yesterday's chats
+on_sync       → Analyze newly synced messages
+weekly@mon    → Generate weekly relationship report
+interval@6h   → Any recurring task
+```
+
+**MCP Integration**
+
+```bash
+python mcp_server.py
+```
+
+Configure in Claude Desktop or Claude Code `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "wechat": {
+      "command": "python",
+      "args": ["/path/to/wechat-extract-mac/mcp_server.py"]
+    }
+  }
+}
+```
+
+Exposes 5 tools: `search_messages`, `get_messages_in_timerange`, `get_contact_stats`, `get_contacts_list`, `get_message_count`.
+
+**Semantic Search (optional)**
+
+```bash
+# Requires Python 3.11+
+pip install chromadb
+```
+
+Once installed, go to Agent Dashboard → Semantic Index tab to index a contact. The `semantic_search` tool is automatically registered in the agent.
+
+**User-Defined Custom Tools**
+
+In Agent Dashboard → Custom Tools, define tools with name + description + parameter schema + prompt template. No code required. The agent can call them just like built-in tools.
+
+**Cross-Session Memory**
+
+After each conversation with 4+ messages, key insights are extracted asynchronously and stored in `config/ai_memory.json`. The next session with the same contact automatically receives these memories in the system prompt. View and delete memories in Settings → 🧠 Memory tab.
+
+### AI Setup
+
+Click ⚙️ in the top bar:
+
+**Option 1: [OpenRouter](https://openrouter.ai) (recommended)** — one API key for 400+ models (GPT-4o, Claude, DeepSeek, Gemini, etc.)
+
+**Option 2: Custom endpoint** — configure api_base + api_key + model directly (Kimi, OpenAI, DeepSeek, etc.)
+
+### Decryption Technical Details
+
+WeChat Mac 4.x uses SQLCipher 4 to encrypt local databases:
+- **Algorithm**: AES-256-CBC
+- **Page size**: 4096 bytes
+- **KDF**: PBKDF2-HMAC-SHA512, 256,000 iterations
+- **HMAC**: SHA-512, 64 bytes per page
+
+Key extraction process:
+1. Re-sign WeChat with ad-hoc to remove Hardened Runtime
+2. Set LLDB breakpoint on `CCKeyDerivationPBKDF`
+3. Trigger key derivation via logout/login
+4. Read 32-byte passphrase from ARM64 register `$x1`
+5. Derive encryption key: passphrase + per-DB salt via PBKDF2
+
+### Security
+
+| Measure | Description |
+|---------|-------------|
+| 🔒 Secrets excluded | `.gitignore` covers API keys, sessions, key files |
+| 🛡️ Debug off | Werkzeug debugger disabled in production |
+| 🚫 XSS prevention | Message content HTML-escaped before rendering |
+| 🌐 SSRF protection | API base URL restricted to HTTPS + domain allowlist |
+| 🏠 Local only | Binds to `127.0.0.1` only |
+
+### Dependencies
+
+```bash
+uv sync          # installs from pyproject.toml
+# or
+pip install -r requirements.txt
+```
+
+Optional:
+```bash
+pip install chromadb   # semantic search (Python 3.11+)
+pip install mcp        # already included in pyproject.toml
+```
+
+### Changelog
+
+> 📋 Full changelog: **[CHANGELOG.md](CHANGELOG.md)**
+
+- **v4.0 (2026-08-25)** — Agent Harness: tool-calling loop, scheduler, MCP, semantic search, 67 new tests
+- **v3.1 (2026-08-10)** — Global AI settings, free model health check
+- **v3 (2026-08-10)** — Multi-provider router + OpenRouter integration
+- **v2 (2026-08-09)** — Dark/Light theme, native PDF export
+
+### License
+
+Personal data backup use only. Do not use for any illegal purposes.
+
+### Credits
+
+- Decryption engine from [wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool)
+- Inspired by [WeChatMsg](https://github.com/LC044/WeChatMsg)

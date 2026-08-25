@@ -77,6 +77,8 @@
             <div class="ai-settings-tabs">
                 <button class="ai-settings-tab active" onclick="switchAISettingsTab('openrouter')">OpenRouter (推荐)</button>
                 <button class="ai-settings-tab" onclick="switchAISettingsTab('custom')">自定义接口</button>
+                <button class="ai-settings-tab" onclick="switchAISettingsTab('notify')">🔔 通知</button>
+                <button class="ai-settings-tab" onclick="switchAISettingsTab('memory')">🧠 记忆</button>
             </div>
             <div class="ai-settings-panel active" id="aiPanelOpenrouter">
                 <div class="form-group">
@@ -110,6 +112,32 @@
                     <button class="btn btn-primary" onclick="saveCustomConfig()">保存</button>
                 </div>
             </div>
+            <div class="ai-settings-panel" id="aiPanelNotify">
+                <div class="form-group">
+                    <label style="font-size:13px;font-weight:600;">同步通知设置</label>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border,#313244);">
+                    <input type="checkbox" id="importantMsgToast" onchange="saveNotifySettings()"
+                        style="width:16px;height:16px;cursor:pointer;">
+                    <div>
+                        <div style="font-size:13px;">显示重要消息提醒</div>
+                        <div class="hint">同步后 AI 检测到重要消息时弹出提醒</div>
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost" onclick="closeAISettings()">关闭</button>
+                </div>
+            </div>
+            <div class="ai-settings-panel" id="aiPanelMemory">
+                <div class="form-group" style="display:flex;justify-content:space-between;align-items:center;">
+                    <label style="font-size:13px;font-weight:600;">跨会话记忆</label>
+                    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#f38ba8;border-color:#f38ba8;" onclick="clearAllMemory()">清空全部</button>
+                </div>
+                <div id="memoryList" style="max-height:260px;overflow-y:auto;font-size:12px;"></div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost" onclick="closeAISettings()">关闭</button>
+                </div>
+            </div>
         </div>
     </div>
     <div class="ai-settings-toast" id="aiSettingsToast"></div>
@@ -138,10 +166,71 @@
         if (tab === 'openrouter') {
             document.querySelectorAll('.ai-settings-tab')[0].classList.add('active');
             document.getElementById('aiPanelOpenrouter').classList.add('active');
-        } else {
+        } else if (tab === 'custom') {
             document.querySelectorAll('.ai-settings-tab')[1].classList.add('active');
             document.getElementById('aiPanelCustom').classList.add('active');
+        } else if (tab === 'notify') {
+            document.querySelectorAll('.ai-settings-tab')[2].classList.add('active');
+            document.getElementById('aiPanelNotify').classList.add('active');
+            // Restore checkbox state from localStorage
+            const cb = document.getElementById('importantMsgToast');
+            if (cb) cb.checked = localStorage.getItem('important_msg_toast') !== 'false';
+        } else if (tab === 'memory') {
+            document.querySelectorAll('.ai-settings-tab')[3].classList.add('active');
+            document.getElementById('aiPanelMemory').classList.add('active');
+            loadMemoryList();
         }
+    };
+
+    window.saveNotifySettings = () => {
+        const cb = document.getElementById('importantMsgToast');
+        if (cb) localStorage.setItem('important_msg_toast', cb.checked ? 'true' : 'false');
+    };
+
+    async function loadMemoryList() {
+        const el = document.getElementById('memoryList');
+        if (!el) return;
+        el.innerHTML = '<div style="color:var(--text-dim);padding:8px;">加载中...</div>';
+        try {
+            const resp = await fetch('/api/ai/memory');
+            const memories = await resp.json();
+            const entries = Object.entries(memories);
+            if (entries.length === 0) {
+                el.innerHTML = '<div style="color:var(--text-dim);padding:8px;">暂无记忆记录</div>';
+                return;
+            }
+            let html = '';
+            for (const [username, items] of entries) {
+                html += `<div style="margin-bottom:10px;border-bottom:1px solid var(--border,#313244);padding-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <span style="font-weight:600;color:var(--text-secondary);">${username}</span>
+                        <button style="font-size:10px;padding:2px 8px;background:none;border:1px solid #f38ba8;color:#f38ba8;border-radius:4px;cursor:pointer;" onclick="deleteContactMemory('${username}')">删除</button>
+                    </div>`;
+                for (const item of items) {
+                    const date = new Date(item.timestamp * 1000).toLocaleDateString('zh-CN');
+                    html += `<div style="padding:3px 0;color:var(--text-dim);display:flex;gap:8px;">
+                        <span style="opacity:0.5;flex-shrink:0;">${date}</span>
+                        <span>${item.summary}</span>
+                    </div>`;
+                }
+                html += '</div>';
+            }
+            el.innerHTML = html;
+        } catch(e) {
+            el.innerHTML = '<div style="color:#f38ba8;padding:8px;">加载失败</div>';
+        }
+    }
+
+    window.deleteContactMemory = async (username) => {
+        if (!confirm(`删除与「${username}」相关的全部记忆？`)) return;
+        await fetch(`/api/ai/memory?username=${encodeURIComponent(username)}`, { method: 'DELETE' });
+        loadMemoryList();
+    };
+
+    window.clearAllMemory = async () => {
+        if (!confirm('清空所有 AI 记忆？此操作不可撤销。')) return;
+        await fetch('/api/ai/memory', { method: 'DELETE' });
+        loadMemoryList();
     };
 
     // === Open / Close ===

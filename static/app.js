@@ -220,6 +220,7 @@
                             <span>${contact.message_count} 条</span>
                             <span>${contact.last_active}</span>
                         </div>
+                        ${contact.ai_summary ? `<div class="contact-ai-summary">${escapeHtml(contact.ai_summary)}</div>` : ''}
                     </div>
                     <div class="contact-count">${formatCount(contact.message_count)}</div>
                 </div>
@@ -492,6 +493,10 @@
                     loadContacts(true);
                     if (data.new_messages) {
                         showToast(`同步完成，新增 ${data.new_messages} 条消息`);
+                    }
+                } else if (data.type === 'important_message') {
+                    if (localStorage.getItem('important_msg_toast') !== 'false') {
+                        showToast(`⚠️ ${data.reason || '有重要消息'}`);
                     }
                 }
             } catch (err) {

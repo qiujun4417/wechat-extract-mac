@@ -495,6 +495,52 @@ def get_messages(username, limit=50, offset=0, skip_images=False):
     return messages
 
 
+def search_messages(username, keyword, limit=50):
+    """Full-text search across all message shards for a contact using LIKE.
+
+    Note: zstd-compressed messages (ct_type=4) are stored as bytes and will
+    not match text keyword searches — this is a known limitation.
+    """
+    tables = find_message_table(username)
+    if not tables:
+        return []
+    results = []
+    seen_ids = set()
+    for db_path, table_name in tables:
+        try:
+            conn = get_db(db_path)
+            self_id = _get_self_sender_id(db_path)
+            cursor = conn.execute(
+                f"SELECT local_id, local_type, real_sender_id, create_time, "
+                f"message_content, WCDB_CT_message_content "
+                f"FROM [{table_name}] "
+                f"WHERE message_content LIKE ? "
+                f"ORDER BY create_time DESC LIMIT ?",
+                (f"%{keyword}%", limit * 2),  # over-fetch to account for dupes
+            )
+            for row in cursor:
+                local_id = row["local_id"]
+                if local_id in seen_ids:
+                    continue
+                seen_ids.add(local_id)
+                ct_type = row["WCDB_CT_message_content"] or 0
+                content = decode_message_content(row["message_content"], ct_type)
+                is_self = row["real_sender_id"] == self_id
+                ts = row["create_time"]
+                results.append({
+                    "time": ts,
+                    "time_str": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
+                    "is_self": is_self,
+                    "content": content,
+                    "sender_name": "我" if is_self else _get_contact_display_name(username),
+                })
+            conn.close()
+        except Exception:
+            continue
+    results.sort(key=lambda x: x["time"] or 0, reverse=True)
+    return results[:limit]
+
+
 def get_messages_by_timerange(username, time_from=0, time_to=0, limit=200):
     """Get messages within a time range across all shards."""
     tables = find_message_table(username)
@@ -823,6 +869,70 @@ def _push_event(event_data):
             _event_subscribers.remove(q)
 
 
+# Cooldown: push at most one important_message notification per 10 minutes
+_last_important_push = 0
+_IMPORTANT_COOLDOWN = 600  # seconds
+
+
+def _classify_important_messages(messages_list):
+    """Background worker: classify messages for importance and push SSE event."""
+    global _last_important_push
+    if not messages_list:
+        return
+    # Respect cooldown
+    if time.time() - _last_important_push < _IMPORTANT_COOLDOWN:
+        return
+    try:
+        provider = _model_router._get_active_provider()
+        if not provider or not provider.api_key:
+            return
+        api_url, headers, _ = _model_router.build_request_params(
+            _model_router.get_active_model(), [], thinking=None
+        )
+        # Build compact message text (up to 50 messages, 150 chars each)
+        lines = []
+        for msg in messages_list[:50]:
+            sender = "我" if msg.get("is_self") else (msg.get("sender_name") or "对方")
+            content = str(msg.get("content", ""))[:150]
+            if content.strip():
+                lines.append(f"[{msg.get('time_str', '')}] {sender}: {content}")
+        if not lines:
+            return
+        text = "\n".join(lines)
+        prompt = (
+            "以下是最近同步的微信消息，请判断其中是否有需要立即关注的重要信息"
+            "（如被提及名字、紧急事项、时间地点安排、明确的问句等）。\n\n"
+            f"{text}\n\n"
+            "请只输出 JSON，格式：{\"important\": true/false, \"reason\": \"一句话说明\"}\n"
+            "如果没有重要信息，输出 {\"important\": false, \"reason\": \"\"}"
+        )
+        payload = {
+            "model": _model_router.get_active_model(),
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "max_tokens": 80,
+        }
+        resp = _req_lib.post(api_url, json=payload, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return
+        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        # Strip markdown fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+            raw = raw.rstrip("`").strip()
+        result = json.loads(raw)
+        if result.get("important"):
+            _last_important_push = time.time()
+            _push_event({
+                "type": "important_message",
+                "reason": result.get("reason", "有重要消息"),
+            })
+            print(f"[Smart Sync] Important message detected: {result.get('reason', '')}")
+    except Exception as e:
+        print(f"[Smart Sync] Classification error: {e}")
+
+
 def _rebuild_contacts_cache():
     """Rebuild the contacts JSON cache file after sync."""
     try:
@@ -1087,6 +1197,33 @@ def api_decrypt_sync():
         # Push real-time event to all connected clients
         _push_event({"type": "sync_complete", "new_messages": success})
         _push_event({"type": "contacts_updated"})
+
+        # Smart notification: classify recent messages for importance
+        if success > 0:
+            try:
+                # Gather last 5 messages from top-5 most active contacts
+                cached_contacts = []
+                if os.path.exists(CONTACTS_CACHE_FILE):
+                    with open(CONTACTS_CACHE_FILE, "r", encoding="utf-8") as _f:
+                        cached_contacts = json.load(_f).get("contacts", [])[:5]
+                recent_msgs = []
+                for _c in cached_contacts:
+                    recent_msgs.extend(get_messages(_c["username"], limit=5, skip_images=True))
+                if recent_msgs:
+                    threading.Thread(
+                        target=_classify_important_messages,
+                        args=(recent_msgs,),
+                        daemon=True,
+                    ).start()
+            except Exception:
+                pass
+
+            # Trigger on_sync scheduled tasks
+            try:
+                if _ai_scheduler_engine:
+                    _ai_scheduler_engine.trigger_on_sync()
+            except Exception:
+                pass
 
         yield f"data: {json.dumps({'type': 'done', 'message': f'✅ 同步完成！成功 {success} 个数据库', 'success': success, 'failed': failed})}\n\n"
 
@@ -1643,6 +1780,24 @@ def _save_sessions():
 
 _load_sessions()
 
+import ai_summary as _ai_summary
+_ai_summary.init(CONTACTS_CACHE_FILE)
+
+import ai_memory as _ai_memory
+_ai_memory.init(CONFIG_DIR)
+
+import ai_scheduler as _ai_scheduler
+_ai_scheduler_engine = _ai_scheduler.init(CONFIG_DIR, _model_router, _push_event)
+
+import ai_custom_tools as _ai_custom_tools
+_ai_custom_tools.init(CONFIG_DIR)
+
+import ai_semantic as _ai_semantic
+try:
+    _ai_semantic.init(CONFIG_DIR)
+except Exception as _sem_err:
+    print(f"[Semantic] Init skipped: {_sem_err}")
+
 
 @app.route("/ai")
 def ai_page():
@@ -1799,6 +1954,7 @@ def api_ai_session_create():
         "contacts": data.get("contacts", []),
         "title": data.get("title", "New Chat"),
         "updated": time.time(),
+        "events": [],
     }
     _save_sessions()
     return jsonify({"id": sid})
@@ -1826,8 +1982,28 @@ def api_ai_session_update(sid):
         session["contacts"] = data["contacts"]
     if "title" in data:
         session["title"] = data["title"]
+    if "events" in data:
+        session["events"] = data["events"]
     session["updated"] = time.time()
     _save_sessions()
+    # Trigger async memory extraction when session has enough substance
+    if len(session.get("messages", [])) >= 4 and session.get("contacts"):
+        try:
+            provider = _model_router._get_active_provider()
+            if provider and provider.api_key:
+                api_url, headers, _ = _model_router.build_request_params(
+                    _model_router.get_active_model(), [], thinking=None
+                )
+                _ai_memory.extract_memory_async(
+                    session["messages"],
+                    session["contacts"],
+                    sid,
+                    api_url,
+                    headers,
+                    _model_router.get_active_model(),
+                )
+        except Exception:
+            pass  # memory extraction is best-effort
     return jsonify({"ok": True})
 
 
@@ -1837,6 +2013,39 @@ def api_ai_session_delete(sid):
     if sid in _ai_sessions:
         del _ai_sessions[sid]
         _save_sessions()
+    return jsonify({"ok": True})
+
+
+# Pending tool approvals: {tool_call_id: (threading.Event, [approved_bool])}
+_pending_approvals = {}
+
+
+@app.route("/api/ai/tool_approval", methods=["POST"])
+def api_ai_tool_approval():
+    """Resolve a pending tool approval request."""
+    data = request.get_json() or {}
+    tool_id = data.get("id")
+    approved = bool(data.get("approved", True))
+    entry = _pending_approvals.pop(tool_id, None)
+    if entry:
+        event, result = entry
+        result[0] = approved
+        event.set()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/ai/memory", methods=["GET"])
+def api_ai_memory_get():
+    """Return all stored AI memories grouped by contact username."""
+    return jsonify(_ai_memory.get_all_memories())
+
+
+@app.route("/api/ai/memory", methods=["DELETE"])
+def api_ai_memory_delete():
+    """Delete memory entries. Body: {username: str} to clear one contact, or {} to clear all."""
+    data = request.get_json() or {}
+    username = data.get("username")
+    _ai_memory.delete_memory(username)
     return jsonify({"ok": True})
 
 
@@ -1936,6 +2145,13 @@ def api_ai_chat():
             api_messages.append({"role": "system", "content": system_content})
             print(f"  System context: {len(system_content)} chars")
 
+    # Inject cross-session memory for selected contacts
+    if context_usernames:
+        memory_text = _ai_memory.get_relevant_memory(context_usernames)
+        if memory_text:
+            api_messages.append({"role": "system", "content": memory_text})
+            print(f"  Memory injected: {len(memory_text)} chars")
+
     # Add user conversation messages
     api_messages.extend(user_messages)
 
@@ -1982,11 +2198,83 @@ def api_ai_chat():
     print(f"[AI Chat] Calling API: {api_url}")
     print(f"[AI Chat] Payload: model={model_id}, messages={len(api_messages)}, stream=True, thinking={thinking_param}")
 
+    # Agent mode: use tool-calling loop when context contacts are provided
+    use_tools = data.get("use_tools", True)
+    use_plan = data.get("use_plan", False)
+    if use_tools and context_usernames:
+        try:
+            from ai_agent import make_default_registry, run_agent_loop, run_plan_and_execute_loop
+            registry = make_default_registry(context_usernames)
+            # Register user-defined custom tools
+            _ai_custom_tools.register_in_registry(registry, _model_router)
+            # Append tool availability hint to the first system message
+            if api_messages and api_messages[0]["role"] == "system":
+                api_messages[0]["content"] += (
+                    "\n\n你拥有以下工具可以主动查询微信聊天数据：\n"
+                    "- search_messages: 在聊天记录中搜索关键词\n"
+                    "- get_messages_in_timerange: 获取某时间段的聊天记录\n"
+                    "- get_contact_stats: 获取联系人的消息统计\n"
+                    "- get_contacts_list: 获取联系人列表\n"
+                    "需要查询数据时请主动调用工具，不要猜测。"
+                )
+            payload["messages"] = api_messages
+            loop_fn = run_plan_and_execute_loop if use_plan else run_agent_loop
+            print(f"[AI Chat] Agent mode ({'plan+execute' if use_plan else 'react'}): tools for {context_usernames}")
+            return Response(
+                stream_with_context(loop_fn(api_url, headers, payload, api_messages, registry)),
+                mimetype="text/event-stream; charset=utf-8",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        except Exception as e:
+            print(f"[AI Chat] Agent mode failed, falling back to direct: {e}")
+
     return Response(
         stream_with_context(stream_chat_sse(api_url, headers, payload)),
         mimetype="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+@app.route("/api/contacts/summaries", methods=["GET"])
+def api_contacts_summaries_get():
+    """Return all cached AI contact summaries as {username: summary}."""
+    return jsonify(_ai_summary.get_all_summaries())
+
+
+@app.route("/api/contacts/summaries", methods=["POST"])
+def api_contacts_summaries_generate():
+    """Trigger background AI summary generation for up to 50 contacts."""
+    provider = _model_router._get_active_provider()
+    if not provider or not provider.api_key:
+        return jsonify({"error": "未配置 AI 服务提供商或 API Key"}), 400
+
+    try:
+        api_url, headers, base_payload = _model_router.build_request_params(
+            _model_router.get_active_model(), [], thinking=None
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    model_id = _model_router.get_active_model()
+
+    # Load contacts with message counts (use cached list)
+    all_contacts = get_all_contacts()
+    # Sort by message count descending (most active first)
+    def _count(c):
+        return get_message_count(c["username"])
+
+    contacts_with_msgs = [(c, get_message_count(c["username"])) for c in all_contacts]
+    contacts_with_msgs.sort(key=lambda x: x[1], reverse=True)
+
+    scheduled = 0
+    for contact, count in contacts_with_msgs[:50]:
+        if count < 5:
+            continue  # skip contacts with too few messages
+        display = contact.get("remark") or contact.get("nick_name") or contact["username"]
+        _ai_summary.schedule_summary(contact["username"], display, api_url, headers, model_id)
+        scheduled += 1
+
+    return jsonify({"scheduled": scheduled, "message": f"已安排 {scheduled} 个联系人的摘要生成"})
 
 
 @app.route("/api/ai/upload", methods=["POST"])
@@ -2143,6 +2431,188 @@ def extract_article_urls_for_contact(username):
     return articles
 
 
+@app.route("/agent")
+def agent_page():
+    """Render the Agent Dashboard page."""
+    return render_template("agent.html")
+
+
+@app.route("/api/agent/tasks", methods=["GET"])
+def api_agent_tasks_list():
+    """List all scheduled tasks."""
+    return jsonify(_ai_scheduler_engine.list_tasks())
+
+
+@app.route("/api/agent/tasks", methods=["POST"])
+def api_agent_tasks_create():
+    """Create a new scheduled task."""
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()
+    prompt = data.get("prompt", "").strip()
+    schedule = data.get("schedule", "daily@08:00")
+    contacts = data.get("contacts", [])
+    enabled = data.get("enabled", True)
+    if not name or not prompt:
+        return jsonify({"error": "name 和 prompt 不能为空"}), 400
+    task = _ai_scheduler_engine.create_task(name, prompt, schedule, contacts, enabled)
+    return jsonify(task), 201
+
+
+@app.route("/api/agent/tasks/<task_id>", methods=["PUT"])
+def api_agent_tasks_update(task_id):
+    """Update a scheduled task."""
+    data = request.get_json() or {}
+    ok = _ai_scheduler_engine.update_task(task_id, data)
+    if not ok:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/agent/tasks/<task_id>", methods=["DELETE"])
+def api_agent_tasks_delete(task_id):
+    """Delete a scheduled task."""
+    ok = _ai_scheduler_engine.delete_task(task_id)
+    if not ok:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/agent/tasks/<task_id>/run", methods=["POST"])
+def api_agent_tasks_run(task_id):
+    """Manually trigger a scheduled task."""
+    ok = _ai_scheduler_engine.run_now(task_id)
+    if not ok:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify({"ok": True, "message": "任务已触发，结果将通过通知推送"})
+
+
+@app.route("/api/agent/tasks/<task_id>/history", methods=["GET"])
+def api_agent_tasks_history(task_id):
+    """Get execution history for a task."""
+    task = _ai_scheduler_engine.get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify({"history": task.get("history", [])})
+
+
+# ── Custom Tools API ──
+
+@app.route("/api/agent/custom_tools", methods=["GET"])
+def api_custom_tools_list():
+    return jsonify(_ai_custom_tools.list_tools())
+
+
+@app.route("/api/agent/custom_tools", methods=["POST"])
+def api_custom_tools_create():
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()
+    description = data.get("description", "").strip()
+    if not name or not description:
+        return jsonify({"error": "name 和 description 不能为空"}), 400
+    tool = _ai_custom_tools.create_tool(
+        name, description,
+        data.get("parameters", {}),
+        data.get("prompt_template", ""),
+    )
+    return jsonify(tool), 201
+
+
+@app.route("/api/agent/custom_tools/<tool_id>", methods=["DELETE"])
+def api_custom_tools_delete(tool_id):
+    ok = _ai_custom_tools.delete_tool(tool_id)
+    if not ok:
+        return jsonify({"error": "工具不存在"}), 404
+    return jsonify({"ok": True})
+
+
+# ── Report Generation Agent API ──
+
+@app.route("/api/agent/report", methods=["POST"])
+def api_agent_report():
+    """Stream a report generation agent response."""
+    data = request.get_json() or {}
+    contacts_list = data.get("contacts", [])
+    prompt = data.get("prompt", "请生成聊天数据分析报告，以 HTML 格式输出完整报告。")
+    model_id = data.get("model", "")
+
+    if not model_id:
+        model_id = _model_router.get_active_model()
+
+    try:
+        api_url, headers, payload = _model_router.build_request_params(model_id, [], thinking=None)
+    except (ValueError, AIError) as e:
+        def err():
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        return Response(stream_with_context(err()), mimetype="text/event-stream; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    from ai_agent import make_default_registry, run_agent_loop, ToolRegistry
+
+    # Build context with selected contacts
+    api_messages = [
+        {"role": "system", "content": (
+            "请始终使用中文回答。"
+            "当输出 HTML 报告时，输出完整独立的 HTML 文件，包含 CSS 样式，可直接在浏览器打开。"
+        )},
+    ]
+
+    if contacts_list:
+        # Use existing data functions to build context
+        all_contacts = get_all_contacts()
+        contact_map = {c["username"]: c for c in all_contacts}
+        context_lines = []
+        for uname in contacts_list:
+            msgs = get_messages(uname, limit=100, skip_images=True)
+            if msgs:
+                info = contact_map.get(uname, {})
+                name = info.get("remark") or info.get("nick_name") or uname
+                context_lines.append(f"\n--- 与「{name}」的聊天记录 ---")
+                for m in msgs:
+                    sender = "我" if m["is_self"] else (m.get("sender_name") or name)
+                    context_lines.append(f"[{m['time_str']}] {sender}: {m['content']}")
+        if context_lines:
+            api_messages.append({"role": "system", "content": "\n".join(context_lines)})
+
+    api_messages.append({"role": "user", "content": prompt})
+    payload["messages"] = api_messages
+
+    registry = make_default_registry(contacts_list) if contacts_list else ToolRegistry()
+    _ai_custom_tools.register_in_registry(registry, _model_router)
+
+    return Response(
+        stream_with_context(run_agent_loop(api_url, headers, payload, api_messages, registry, max_iterations=8)),
+        mimetype="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Semantic Search Status API (stub — active when ai_semantic is available) ──
+
+@app.route("/api/agent/semantic/status", methods=["GET"])
+def api_semantic_status():
+    try:
+        import ai_semantic as _sem
+        return jsonify(_sem.get_status())
+    except ImportError:
+        return jsonify({"error": "semantic search not available"}), 503
+
+
+@app.route("/api/agent/semantic/index", methods=["POST"])
+def api_semantic_index():
+    try:
+        import ai_semantic as _sem
+        data = request.get_json() or {}
+        username = data.get("username", "")
+        if not username:
+            return jsonify({"error": "username required"}), 400
+        msgs = get_messages(username, limit=5000, skip_images=True)
+        threading.Thread(target=_sem.index_contact, args=(username, msgs), daemon=True).start()
+        return jsonify({"ok": True, "message": f"正在后台索引 {len(msgs)} 条消息"})
+    except ImportError:
+        return jsonify({"error": "semantic search not available"}), 503
+
+
 @app.route("/scraper")
 def scraper_page():
     """Render the article scraper page."""
@@ -2272,6 +2742,7 @@ def api_articles_analyze():
     data = request.get_json()
     job_id = data.get("job_id")
     prompt = data.get("prompt", "")
+    mode = data.get("mode", "standard")  # "standard" or "agent"
     model_id = data.get("model", "")  # Per-request model override
 
     # Default prompt
@@ -2389,13 +2860,47 @@ def api_articles_analyze():
         ]
 
     print(f"\n{'='*60}")
-    print(f"[Article Analysis] {len(successful)} articles, model: {model_id}")
+    print(f"[Article Analysis] {len(successful)} articles, model: {model_id}, mode: {mode}")
     print(f"  Prompt: {prompt[:80]}...")
     print(f"  Context size: {len(articles_context)} chars")
     print(f"{'='*60}")
 
     # Update payload with built messages (longer timeout for article analysis)
     payload["messages"] = api_messages
+
+    # Agent mode: let model selectively fetch full article content
+    if mode == "agent":
+        try:
+            from ai_agent import ToolRegistry, run_agent_loop
+            # Build {url: full_content} lookup from scraped results
+            url_to_content = {
+                r.get("url", ""): r.get("content", "")
+                for r in successful if r.get("url")
+            }
+            agent_registry = ToolRegistry()
+            agent_registry.register(
+                name="fetch_article_full",
+                description=(
+                    "获取指定 URL 公众号文章的完整内容。"
+                    "先阅读文章列表摘要，按需调用此工具获取感兴趣文章的全文，再进行分析。"
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "文章的 URL"},
+                    },
+                    "required": ["url"],
+                },
+                fn=lambda url: {"url": url, "content": url_to_content.get(url, "文章内容不存在")},
+            )
+            print(f"[Article Analysis] Agent mode: {len(url_to_content)} articles available as tools")
+            return Response(
+                stream_with_context(run_agent_loop(api_url, headers, payload, api_messages, agent_registry, max_iterations=15)),
+                mimetype="text/event-stream; charset=utf-8",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        except Exception as e:
+            print(f"[Article Analysis] Agent mode failed, falling back: {e}")
 
     return Response(
         stream_with_context(stream_chat_sse(api_url, headers, payload, timeout=180)),

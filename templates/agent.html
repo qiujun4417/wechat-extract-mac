@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 控制台 - WeChat Export</title>
+    <script src="/static/theme.js"></script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        :root {
+            --bg: #1e1e2e; --surface: #252535; --border: #313244;
+            --text: #cdd6f4; --text-dim: #a6adc8; --accent: #5b6abf;
+            --success: #a6e3a1; --error: #f38ba8; --warning: #f9e2af;
+        }
+        [data-theme="light"] {
+            --bg: #f5f5f7; --surface: #e8e8ed; --border: #d1d1d6;
+            --text: #1d1d1f; --text-dim: #48484a; --accent: #5b6abf;
+            --success: #34c759; --error: #ff3b30; --warning: #ff9f0a;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: var(--bg); color: var(--text); min-height: 100vh; }
+
+        /* Top bar */
+        .top-bar { display:flex; align-items:center; padding:10px 24px;
+                   background:var(--surface); border-bottom:1px solid var(--border);
+                   gap:16px; flex-shrink:0; }
+        .top-bar a { color:var(--text-dim); text-decoration:none; font-size:13px;
+                     padding:4px 10px; border-radius:6px; border:1px solid var(--border); }
+        .top-bar a:hover { border-color:var(--accent); color:var(--accent); }
+        .top-bar h1 { font-size:16px; font-weight:600; }
+        .top-bar .spacer { flex:1; }
+        .config-btn { padding:6px 12px; background:var(--bg); border:1px solid var(--border);
+                      border-radius:6px; color:var(--text-dim); cursor:pointer; font-size:13px; }
+        .config-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+        /* Layout */
+        .main { display:flex; height:calc(100vh - 49px); }
+
+        /* Tabs sidebar */
+        .tabs-sidebar { width:180px; border-right:1px solid var(--border); padding:16px 0;
+                        background:var(--surface); flex-shrink:0; }
+        .tab-item { display:flex; align-items:center; gap:8px; padding:10px 16px;
+                    font-size:13px; color:var(--text-dim); cursor:pointer;
+                    border-left:2px solid transparent; transition:all 0.15s; }
+        .tab-item:hover { color:var(--text); background:var(--bg); }
+        .tab-item.active { color:var(--accent); border-left-color:var(--accent);
+                           background:var(--bg); font-weight:600; }
+
+        /* Content panels */
+        .content { flex:1; overflow-y:auto; padding:24px; }
+        .panel { display:none; }
+        .panel.active { display:block; }
+
+        /* Cards */
+        .card { background:var(--surface); border:1px solid var(--border);
+                border-radius:10px; padding:16px; margin-bottom:16px; }
+        .card-header { display:flex; justify-content:space-between; align-items:center;
+                       margin-bottom:12px; }
+        .card-title { font-size:14px; font-weight:600; }
+
+        /* Buttons */
+        .btn { padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer;
+               border:none; font-family:inherit; }
+        .btn-primary { background:var(--accent); color:#fff; }
+        .btn-primary:hover { opacity:0.9; }
+        .btn-ghost { background:none; border:1px solid var(--border); color:var(--text-dim); }
+        .btn-ghost:hover { border-color:var(--accent); color:var(--accent); }
+        .btn-danger { background:none; border:1px solid var(--error); color:var(--error); }
+        .btn-sm { padding:4px 10px; font-size:12px; }
+
+        /* Form */
+        .form-group { margin-bottom:14px; }
+        .form-group label { display:block; font-size:12px; color:var(--text-dim); margin-bottom:4px; }
+        .form-group input, .form-group select, .form-group textarea {
+            width:100%; padding:8px 12px; border-radius:6px;
+            border:1px solid var(--border); background:var(--bg);
+            color:var(--text); font-size:13px; font-family:inherit;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            border-color:var(--accent); outline:none;
+        }
+        .form-group textarea { resize:vertical; min-height:80px; }
+        .hint { font-size:11px; color:var(--text-dim); margin-top:4px; }
+
+        /* Task item */
+        .task-item { background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                     padding:14px; margin-bottom:10px; }
+        .task-header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+        .task-name { font-weight:600; font-size:14px; flex:1; }
+        .task-badge { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+        .task-badge.enabled { background:rgba(166,227,161,0.15); color:var(--success); }
+        .task-badge.disabled { background:rgba(166,166,166,0.1); color:var(--text-dim); }
+        .task-meta { font-size:12px; color:var(--text-dim); margin-bottom:8px; }
+        .task-actions { display:flex; gap:6px; }
+        .task-prompt { font-size:12px; color:var(--text-dim); padding:6px 10px;
+                       background:var(--surface); border-radius:4px; margin-bottom:8px;
+                       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+        /* History */
+        .history-entry { padding:6px 0; border-top:1px solid var(--border); font-size:12px; }
+        .history-entry .ts { color:var(--text-dim); margin-right:8px; }
+        .history-entry .ok { color:var(--success); }
+        .history-entry .fail { color:var(--error); }
+
+        /* Status dot */
+        .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:4px; }
+        .status-dot.ok { background:var(--success); }
+        .status-dot.fail { background:var(--error); }
+        .status-dot.idle { background:var(--text-dim); }
+
+        /* Toggle switch */
+        .toggle { position:relative; width:36px; height:20px; flex-shrink:0; }
+        .toggle input { opacity:0; width:0; height:0; position:absolute; }
+        .toggle-slider { position:absolute; inset:0; background:var(--border);
+                         border-radius:10px; cursor:pointer; transition:0.2s; }
+        .toggle input:checked + .toggle-slider { background:var(--accent); }
+        .toggle-slider:before { content:""; position:absolute; width:16px; height:16px;
+                                 left:2px; bottom:2px; background:#fff; border-radius:50%;
+                                 transition:0.2s; }
+        .toggle input:checked + .toggle-slider:before { transform:translateX(16px); }
+
+        /* Toast */
+        .toast { position:fixed; bottom:20px; right:20px; background:var(--surface);
+                 border:1px solid var(--border); border-radius:8px; padding:10px 16px;
+                 font-size:13px; z-index:9999; opacity:0; transition:opacity 0.3s;
+                 pointer-events:none; }
+        .toast.show { opacity:1; }
+
+        /* Execution log */
+        .exec-log { font-family:monospace; font-size:12px; background:var(--bg);
+                    border-radius:6px; padding:10px; max-height:300px; overflow-y:auto; }
+        .exec-log .entry { padding:4px 0; border-bottom:1px solid var(--border); }
+        .exec-log .entry:last-child { border-bottom:none; }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <a href="/">← 导出</a>
+            <a href="/ai">🤖 AI</a>
+        </div>
+        <h1>⚡ Agent 控制台</h1>
+        <div class="spacer"></div>
+        <button class="config-btn" onclick="toggleTheme()">🌙</button>
+    </div>
+
+    <div class="main">
+        <!-- Tabs -->
+        <div class="tabs-sidebar">
+            <div class="tab-item active" onclick="switchTab('tasks')">📅 任务调度</div>
+            <div class="tab-item" onclick="switchTab('custom-tools')">🔧 自定义工具</div>
+            <div class="tab-item" onclick="switchTab('semantic')">🔍 语义索引</div>
+            <div class="tab-item" onclick="switchTab('report')">📊 生成报告</div>
+            <div class="tab-item" onclick="switchTab('exec-log')">📋 执行记录</div>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+
+            <!-- ── 任务调度 ── -->
+            <div class="panel active" id="panel-tasks">
+                <div class="card-header" style="margin-bottom:16px;">
+                    <h2 style="font-size:16px;">定时 Agent 任务</h2>
+                    <button class="btn btn-primary" onclick="showNewTaskForm()">＋ 新建任务</button>
+                </div>
+
+                <!-- New task form (hidden by default) -->
+                <div class="card" id="newTaskForm" style="display:none;">
+                    <div class="card-title" style="margin-bottom:14px;">新建任务</div>
+                    <div class="form-group">
+                        <label>任务名称</label>
+                        <input id="nt-name" type="text" placeholder="如：每日聊天摘要">
+                    </div>
+                    <div class="form-group">
+                        <label>任务描述（AI 会执行这个 prompt）</label>
+                        <textarea id="nt-prompt" placeholder="如：请总结今天的聊天要点，包括重要事件和待处理事项"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>执行计划</label>
+                        <select id="nt-schedule">
+                            <option value="daily@08:00">每天 08:00</option>
+                            <option value="daily@09:00">每天 09:00</option>
+                            <option value="daily@18:00">每天 18:00</option>
+                            <option value="weekly@mon@09:00">每周一 09:00</option>
+                            <option value="on_sync">每次同步后</option>
+                            <option value="interval@1h">每小时</option>
+                            <option value="interval@6h">每 6 小时</option>
+                        </select>
+                        <div class="hint">on_sync 在每次微信数据同步完成后自动触发</div>
+                    </div>
+                    <div class="form-group">
+                        <label>关联联系人（可选，留空则不加载聊天上下文）</label>
+                        <div id="nt-contacts-list" style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="btn btn-ghost" onclick="hideNewTaskForm()">取消</button>
+                        <button class="btn btn-primary" onclick="createTask()">创建</button>
+                    </div>
+                </div>
+
+                <div id="taskList"><div style="color:var(--text-dim);padding:20px 0;">加载中...</div></div>
+            </div>
+
+            <!-- ── 自定义工具 ── -->
+            <div class="panel" id="panel-custom-tools">
+                <div class="card-header" style="margin-bottom:16px;">
+                    <h2 style="font-size:16px;">自定义 Agent 工具</h2>
+                    <button class="btn btn-primary" onclick="showNewToolForm()">＋ 新建工具</button>
+                </div>
+                <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px;">
+                    定义工具后，AI 在对话中可以主动调用它们。工具通过 prompt 模板 + LLM 调用实现，无需写代码。
+                </p>
+
+                <div class="card" id="newToolForm" style="display:none;">
+                    <div class="card-title" style="margin-bottom:14px;">新建工具</div>
+                    <div class="form-group">
+                        <label>工具名称（英文，无空格）</label>
+                        <input id="ct-name" type="text" placeholder="如：summarize_recent_chat">
+                    </div>
+                    <div class="form-group">
+                        <label>描述（AI 用这个描述决定是否调用）</label>
+                        <input id="ct-desc" type="text" placeholder="如：对指定联系人最近N天的聊天进行摘要">
+                    </div>
+                    <div class="form-group">
+                        <label>参数（JSON Schema properties，可留空）</label>
+                        <textarea id="ct-params" style="font-family:monospace;font-size:12px;" placeholder='{"username": {"type": "string", "description": "联系人 wxid"}, "days": {"type": "integer", "default": 7}}'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Prompt 模板（用 {参数名} 引用参数和 {messages} 引用聊天内容）</label>
+                        <textarea id="ct-prompt" placeholder="请对以下聊天记录进行摘要：\n{messages}"></textarea>
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="btn btn-ghost" onclick="hideNewToolForm()">取消</button>
+                        <button class="btn btn-primary" onclick="createCustomTool()">创建</button>
+                    </div>
+                </div>
+
+                <div id="customToolList"><div style="color:var(--text-dim);padding:20px 0;">加载中...</div></div>
+            </div>
+
+            <!-- ── 语义索引 ── -->
+            <div class="panel" id="panel-semantic">
+                <h2 style="font-size:16px;margin-bottom:8px;">语义搜索索引</h2>
+                <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px;">
+                    为联系人建立向量索引后，AI 可以进行语义搜索（搜"项目"能找到"工程"）。首次索引较慢。
+                </p>
+                <div id="semanticStatus" style="padding:20px 0;color:var(--text-dim);">
+                    检查索引状态...
+                </div>
+                <div id="semanticContactList"></div>
+            </div>
+
+            <!-- ── 生成报告 ── -->
+            <div class="panel" id="panel-report">
+                <h2 style="font-size:16px;margin-bottom:16px;">生成分析报告</h2>
+                <div class="card">
+                    <div class="form-group">
+                        <label>报告类型</label>
+                        <select id="rpt-type">
+                            <option value="monthly">📅 月度聊天总结</option>
+                            <option value="relationship">💕 关系分析报告</option>
+                            <option value="custom">✏️ 自定义报告</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>自定义描述（报告类型为"自定义"时生效）</label>
+                        <textarea id="rpt-prompt" placeholder="如：帮我分析过去一个月和这些联系人的聊天主题和情感变化"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>选择联系人</label>
+                        <div id="rpt-contacts-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="btn btn-primary" id="rptBtn" onclick="generateReport()">🚀 生成报告</button>
+                    </div>
+                </div>
+                <div id="rptOutput" style="display:none;">
+                    <div class="card">
+                        <div class="card-title" style="margin-bottom:10px;">报告生成中...</div>
+                        <div id="rptContent" style="font-size:13px;color:var(--text-dim);white-space:pre-wrap;max-height:500px;overflow-y:auto;"></div>
+                        <div style="margin-top:10px;display:flex;gap:8px;">
+                            <button class="btn btn-ghost btn-sm" onclick="downloadReport()">💾 下载 HTML</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── 执行记录 ── -->
+            <div class="panel" id="panel-exec-log">
+                <h2 style="font-size:16px;margin-bottom:16px;">Agent 执行记录</h2>
+                <div id="execLogList"><div style="color:var(--text-dim);">暂无记录</div></div>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ── State ──
+    let contacts = [];
+    let tasks = [];
+    let customTools = [];
+    let execLog = JSON.parse(localStorage.getItem('agent_exec_log') || '[]');
+    let reportHtml = '';
+
+    // ── Init ──
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadContacts();
+        await loadTasks();
+        await loadCustomTools();
+        renderExecLog();
+        loadSemanticStatus();
+        connectSSE();
+    });
+
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.textContent = msg; t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.querySelector(`.tab-item[onclick="switchTab('${name}')"]`).classList.add('active');
+        document.getElementById(`panel-${name}`).classList.add('active');
+    }
+
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ── Contacts ──
+    async function loadContacts() {
+        try {
+            const r = await fetch('/api/contacts/cached');
+            const data = await r.json();
+            contacts = data.contacts || [];
+            renderContactPickers();
+        } catch(e) {}
+    }
+
+    function renderContactPickers() {
+        ['nt-contacts-list', 'rpt-contacts-list'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.innerHTML = contacts.slice(0, 100).map(c => {
+                const name = c.remark || c.nick_name || c.username;
+                return `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;cursor:pointer;">
+                    <input type="checkbox" value="${esc(c.username)}" style="width:14px;height:14px;">
+                    ${esc(name)} <span style="color:var(--text-dim);font-size:11px;">${c.message_count || ''}</span>
+                </label>`;
+            }).join('');
+        });
+    }
+
+    function getCheckedContacts(listId) {
+        return Array.from(document.querySelectorAll(`#${listId} input:checked`)).map(i => i.value);
+    }
+
+    // ── Tasks ──
+    async function loadTasks() {
+        const r = await fetch('/api/agent/tasks');
+        tasks = await r.json();
+        renderTaskList();
+    }
+
+    function renderTaskList() {
+        const el = document.getElementById('taskList');
+        if (!tasks.length) { el.innerHTML = '<div style="color:var(--text-dim);padding:20px 0;">暂无任务，点击"新建任务"创建第一个</div>'; return; }
+        el.innerHTML = tasks.map(t => {
+            const lastRun = t.last_run ? new Date(t.last_run * 1000).toLocaleString('zh-CN') : '从未运行';
+            const nextRun = t.next_run && t.next_run < 1e15 ? new Date(t.next_run * 1000).toLocaleString('zh-CN') : (t.schedule === 'on_sync' ? '同步触发' : '—');
+            const lastHistory = t.history && t.history[0];
+            return `<div class="task-item">
+                <div class="task-header">
+                    <span class="status-dot ${lastHistory ? (lastHistory.success ? 'ok' : 'fail') : 'idle'}"></span>
+                    <span class="task-name">${esc(t.name)}</span>
+                    <span class="task-badge ${t.enabled ? 'enabled' : 'disabled'}">${t.enabled ? '启用' : '停用'}</span>
+                    <label class="toggle"><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleTask('${t.id}', this.checked)"><span class="toggle-slider"></span></label>
+                </div>
+                <div class="task-prompt">${esc(t.prompt)}</div>
+                <div class="task-meta">🗓 ${esc(t.schedule)} &nbsp;|&nbsp; 上次: ${lastRun} &nbsp;|&nbsp; 下次: ${nextRun}</div>
+                ${lastHistory ? `<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;padding:6px;background:var(--surface);border-radius:4px;">${esc(lastHistory.result_summary)}</div>` : ''}
+                <div class="task-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="runTaskNow('${t.id}')">▶ 立即运行</button>
+                    <button class="btn btn-ghost btn-sm" onclick="showTaskHistory('${t.id}')">📋 历史</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteTask('${t.id}')">🗑</button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function showNewTaskForm() { document.getElementById('newTaskForm').style.display = 'block'; }
+    function hideNewTaskForm() { document.getElementById('newTaskForm').style.display = 'none'; }
+
+    async function createTask() {
+        const name = document.getElementById('nt-name').value.trim();
+        const prompt = document.getElementById('nt-prompt').value.trim();
+        const schedule = document.getElementById('nt-schedule').value;
+        const contacts = getCheckedContacts('nt-contacts-list');
+        if (!name || !prompt) { showToast('请填写任务名称和描述'); return; }
+        await fetch('/api/agent/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, prompt, schedule, contacts}),
+        });
+        hideNewTaskForm();
+        await loadTasks();
+        showToast('任务已创建');
+    }
+
+    async function toggleTask(id, enabled) {
+        await fetch(`/api/agent/tasks/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled}),
+        });
+        await loadTasks();
+    }
+
+    async function runTaskNow(id) {
+        const r = await fetch(`/api/agent/tasks/${id}/run`, {method: 'POST'});
+        const data = await r.json();
+        showToast(data.message || '任务已触发');
+    }
+
+    async function deleteTask(id) {
+        if (!confirm('确定删除此任务？')) return;
+        await fetch(`/api/agent/tasks/${id}`, {method: 'DELETE'});
+        await loadTasks();
+        showToast('已删除');
+    }
+
+    async function showTaskHistory(id) {
+        const r = await fetch(`/api/agent/tasks/${id}/history`);
+        const data = await r.json();
+        const entries = data.history || [];
+        if (!entries.length) { showToast('暂无执行历史'); return; }
+        const text = entries.map(e =>
+            `[${new Date(e.timestamp * 1000).toLocaleString('zh-CN')}] ${e.success ? '✓' : '✗'} ${e.result_summary}`
+        ).join('\n');
+        alert(text);
+    }
+
+    // ── Custom Tools ──
+    async function loadCustomTools() {
+        try {
+            const r = await fetch('/api/agent/custom_tools');
+            if (r.ok) customTools = await r.json();
+        } catch(e) {}
+        renderCustomTools();
+    }
+
+    function renderCustomTools() {
+        const el = document.getElementById('customToolList');
+        if (!customTools.length) {
+            el.innerHTML = '<div style="color:var(--text-dim);padding:20px 0;">暂无自定义工具</div>';
+            return;
+        }
+        el.innerHTML = customTools.map(t => `
+            <div class="task-item">
+                <div class="task-header">
+                    <span class="task-name">🔧 ${esc(t.name)}</span>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCustomTool('${t.id}')">🗑</button>
+                </div>
+                <div class="task-prompt">${esc(t.description)}</div>
+            </div>
+        `).join('');
+    }
+
+    function showNewToolForm() { document.getElementById('newToolForm').style.display = 'block'; }
+    function hideNewToolForm() { document.getElementById('newToolForm').style.display = 'none'; }
+
+    async function createCustomTool() {
+        const name = document.getElementById('ct-name').value.trim();
+        const description = document.getElementById('ct-desc').value.trim();
+        const paramsStr = document.getElementById('ct-params').value.trim();
+        const prompt_template = document.getElementById('ct-prompt').value.trim();
+        if (!name || !description) { showToast('请填写工具名称和描述'); return; }
+        let parameters = {};
+        if (paramsStr) { try { parameters = JSON.parse(paramsStr); } catch { showToast('参数 JSON 格式错误'); return; } }
+        const r = await fetch('/api/agent/custom_tools', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, description, parameters, prompt_template}),
+        });
+        if (r.ok) {
+            hideNewToolForm();
+            await loadCustomTools();
+            showToast('工具已创建');
+        } else {
+            const d = await r.json();
+            showToast(d.error || '创建失败');
+        }
+    }
+
+    async function deleteCustomTool(id) {
+        if (!confirm('确定删除此工具？')) return;
+        await fetch(`/api/agent/custom_tools/${id}`, {method: 'DELETE'});
+        await loadCustomTools();
+        showToast('已删除');
+    }
+
+    // ── Semantic Index ──
+    async function loadSemanticStatus() {
+        try {
+            const r = await fetch('/api/agent/semantic/status');
+            if (!r.ok) {
+                document.getElementById('semanticStatus').innerHTML =
+                    '<div style="color:var(--text-dim);">语义搜索未启用（需安装 chromadb）</div>';
+                return;
+            }
+            const data = await r.json();
+            document.getElementById('semanticStatus').innerHTML =
+                `<div style="color:var(--success);">✓ 语义索引可用，已索引 ${data.indexed_contacts || 0} 个联系人</div>`;
+            renderSemanticContacts(data.indexed || []);
+        } catch(e) {
+            document.getElementById('semanticStatus').innerHTML =
+                '<div style="color:var(--text-dim);">语义搜索未启用</div>';
+        }
+    }
+
+    function renderSemanticContacts(indexed) {
+        const el = document.getElementById('semanticContactList');
+        const top = contacts.slice(0, 30);
+        el.innerHTML = `<div class="card"><div class="card-title" style="margin-bottom:10px;">联系人索引状态</div>` +
+            top.map(c => {
+                const name = c.remark || c.nick_name || c.username;
+                const isIndexed = indexed.includes(c.username);
+                return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
+                    <span>${esc(name)}</span>
+                    ${isIndexed
+                        ? '<span style="color:var(--success);font-size:12px;">✓ 已索引</span>'
+                        : `<button class="btn btn-ghost btn-sm" onclick="indexContact('${esc(c.username)}')">索引</button>`}
+                </div>`;
+            }).join('') + '</div>';
+    }
+
+    async function indexContact(username) {
+        showToast('索引中，请稍候...');
+        await fetch('/api/agent/semantic/index', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username}),
+        });
+        setTimeout(loadSemanticStatus, 2000);
+    }
+
+    // ── Report Generation ──
+    async function generateReport() {
+        const type = document.getElementById('rpt-type').value;
+        const prompt = document.getElementById('rpt-prompt').value.trim();
+        const selectedContacts = getCheckedContacts('rpt-contacts-list');
+
+        const promptMap = {
+            monthly: '请分析这些联系人过去一个月的聊天数据，生成一份月度总结报告，包括：消息频率统计、主要话题、重要事件。以 HTML 格式输出完整报告。',
+            relationship: '请分析与这些联系人的聊天关系，包括：互动频率、情感倾向、关系亲密度变化趋势。以 HTML 格式输出完整报告。',
+            custom: prompt || '请生成聊天数据分析报告，以 HTML 格式输出。',
+        };
+
+        document.getElementById('rptOutput').style.display = 'block';
+        document.getElementById('rptContent').textContent = '生成中，请稍候...';
+        document.getElementById('rptBtn').disabled = true;
+        reportHtml = '';
+
+        const resp = await fetch('/api/agent/report', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({report_type: type, contacts: selectedContacts, prompt: promptMap[type]}),
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.content) {
+                        reportHtml += data.content;
+                        document.getElementById('rptContent').textContent = reportHtml.slice(0, 500) + '...';
+                    }
+                    if (data.done) {
+                        document.getElementById('rptContent').textContent = '报告已生成，点击下载查看完整 HTML。';
+                    }
+                } catch(e) {}
+            }
+        }
+        document.getElementById('rptBtn').disabled = false;
+    }
+
+    function downloadReport() {
+        if (!reportHtml) { showToast('请先生成报告'); return; }
+        const blob = new Blob([reportHtml], {type: 'text/html'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `agent_report_${new Date().toISOString().slice(0,10)}.html`;
+        a.click();
+    }
+
+    // ── Exec Log ──
+    function renderExecLog() {
+        const el = document.getElementById('execLogList');
+        if (!execLog.length) { el.innerHTML = '<div style="color:var(--text-dim);">暂无记录</div>'; return; }
+        el.innerHTML = `<div class="exec-log">${execLog.slice(0, 50).map(e =>
+            `<div class="entry"><span class="ts">[${e.time}]</span><span class="${e.success ? 'ok' : 'fail'}">${e.success ? '✓' : '✗'}</span> <strong>${esc(e.task_name)}</strong>: ${esc(e.summary)}</div>`
+        ).join('')}</div>`;
+    }
+
+    // ── SSE for agent_task_result ──
+    function connectSSE() {
+        const es = new EventSource('/api/events');
+        es.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type === 'agent_task_result') {
+                    showToast(`${data.success ? '✅' : '❌'} 任务「${data.task_name}」已完成`);
+                    execLog.unshift({
+                        time: new Date().toLocaleString('zh-CN'),
+                        task_name: data.task_name,
+                        success: data.success,
+                        summary: data.summary,
+                    });
+                    execLog = execLog.slice(0, 100);
+                    localStorage.setItem('agent_exec_log', JSON.stringify(execLog));
+                    loadTasks();
+                    renderExecLog();
+                }
+            } catch(e) {}
+        };
+        es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
+    }
+    </script>
+</body>
+</html>
